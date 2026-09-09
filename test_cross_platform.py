@@ -927,6 +927,70 @@ def test_bundled_voice() -> None:
     )
 
 
+
+def test_nothing_private_is_committed() -> None:
+    """The repository must not carry anything the local machine generated.
+
+    This is the same question ``check_private_files.py`` answers by hand, run
+    automatically so that a change to .gitignore cannot quietly start publishing
+    the archive. It asks git, not the filesystem: a path is a problem if it has
+    ever been committed, because removing it later leaves the blob in the
+    history and in every clone.
+    """
+    print("\nprivacy")
+    import subprocess
+
+    import check_private_files as auditor
+
+    try:
+        status, _ = auditor.run("rev-parse", "--git-dir")
+    except (OSError, subprocess.SubprocessError):
+        check(True, "skipped: git is not available")
+        return
+    if status != 0:
+        check(True, "skipped: not a git checkout")
+        return
+
+    _status, output = auditor.run("ls-files")
+    tracked = {line for line in output.splitlines() if line.strip()}
+    check(bool(tracked), "git reports tracked files")
+    offenders = auditor.classify(tracked)
+    check(
+        not offenders,
+        "nothing private is tracked" + (f" (found {offenders})" if offenders else ""),
+    )
+
+    _status, output = auditor.run("log", "--pretty=format:", "--name-only", "HEAD")
+    history = {line for line in output.splitlines() if line.strip()}
+    offenders = auditor.classify(history)
+    check(
+        not offenders,
+        "nor anywhere in this branch's history"
+        + (f" (found {offenders})" if offenders else ""),
+    )
+
+    # The exceptions have to actually work, or the rule is doing nothing and the
+    # bundled voice is not really shipping.
+    check(
+        auditor.is_allowed(f"voices/{auditor.BUNDLED_VOICE}/reference.wav"),
+        "the bundled voice is allowed through",
+    )
+    check(
+        auditor.is_allowed(f"voices/{auditor.BUNDLED_VOICE}"),
+        "...as a directory entry too, which is how rev-list reports it",
+    )
+    check(
+        not auditor.is_allowed("voices/voice_somebodyelse/reference.wav"),
+        "and no other voice is",
+    )
+    check(
+        auditor.is_allowed(".env.example") and not auditor.is_allowed(".env"),
+        ".env.example ships; .env does not",
+    )
+    for path in ("state/archive/2026-01-01/utt_x/audio.wav", "outputs/take.wav"):
+        check(bool(auditor.classify({path})), f"{path} would be caught")
+
+
 def main() -> int:
     print("cross-platform checks")
     test_bindings()
@@ -939,6 +1003,7 @@ def main() -> int:
     test_requirements()
     test_entry_points_read_env()
     test_bundled_voice()
+    test_nothing_private_is_committed()
 
     print()
     if FAILED:

@@ -203,6 +203,59 @@ difference is in a directory named for it.
 The four bold rows are the whole of the platform difference. Everything else is
 the same code running on both machines.
 
+## What stays on your machine
+
+Speaking a document leaves traces, and all of them stay local by default. This
+is what exists, where, and how to check that none of it is in the repository.
+
+| What | Where | In the repo? |
+| :--- | :--- | :--- |
+| Every utterance spoken: the text you copied, what the model made of it, the audio | `state/archive/` | never |
+| System speech settings — voice, shortcuts, prompt | `state/system_speech.json` | never |
+| Your voice library: profiles and the recordings they clone from | `voices/` | one voice ships, [see below](#the-one-voice-that-ships) |
+| Generated audio from development and testing | `outputs/` | never |
+| API keys, and this machine's model settings | `.env` | never — `.env.example` is what is committed |
+
+Nothing here can be reconstructed from source, so back it up separately if you
+want to keep it.
+
+### Checking it yourself
+
+```bash
+python check_private_files.py              # what this branch would publish
+python check_private_files.py --all        # every branch, and the reflog
+python check_private_files.py --remote     # ...and what GitHub actually holds
+```
+
+It reads what git *has*, not what `.gitignore` claims, and it looks at the whole
+history — a file deleted three commits ago is still in the repository, and still
+in every clone. It also prints how much local history exists and how to read or
+erase it. Exit status is 0 when nothing private is committed.
+
+The same thing in plain git, if you would rather not trust a script:
+
+```bash
+git ls-files | grep -E '^(state|outputs)/|^\.env$'          # tracked right now
+git log --all --pretty=format: --name-only | sort -u \
+  | grep -E '^(state|outputs)/|^\.env$'                     # ever, in any commit
+```
+
+Both should print nothing.
+
+### Erasing the spoken history
+
+The archive is what you would most likely want gone. **System speech** →
+*Recent* → **Clear history** empties it, or delete `state/archive/` directly.
+To stop recording in the first place, turn off *Keep a history* on the same tab;
+to keep the text but not the audio, turn off *Keep the audio*.
+
+### The one voice that ships
+
+`voices/voice_132150d40e9e455b97362ad6/` is committed on purpose, so a fresh
+clone can speak before you have recorded anything. Every other voice is ignored.
+The rules that arrange that are at the bottom of `.gitignore`, and
+`check_private_files.py` will tell you if one ever slips through.
+
 ## Configuration
 
 Two files, and they hold different kinds of thing.
@@ -831,6 +884,7 @@ python test_paragraph_skip.py   # paragraph seeking, pausing, and cleanup on aba
 python test_archive_audio.py    # sizing the archive, and exporting its audio safely
 python test_torch_parity.py     # do the two speech backends compute the same thing?
 python test_cross_platform.py   # shortcuts, providers, backends, .env parsing
+python check_private_files.py   # is anything local being published?
 ```
 
 None of them play audio on any device.
