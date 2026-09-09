@@ -1,0 +1,14 @@
+# Apple Silicon. Run: pip install -r requirements/macos.txt
+-r common.txt
+
+# The MLX runtime. Apple Silicon only -- there is no build for anything else.
+mlx>=0.32,<0.33
+
+# The Qwen audio codec is PyTorch, and runs on MPS here. The main model does
+# not use torch on this platform at all.
+torch>=2.6
+torchaudio>=2.6
+
+# Optional: the hotkey daemon, for anyone who would rather not run Hammerspoon.
+# Hammerspoon is the default on macOS -- it already handles starting at login.
+pynput>=1.7

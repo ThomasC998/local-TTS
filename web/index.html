@@ -1,0 +1,2851 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Breeze TTS 2</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #fff; --ink: #1a1a19; --muted: #6b6b66;
+    --line: #e2e2dd; --accent: #2f6f4f; --accent-ink: #fff; --warn: #8a5a1a;
+    --warn-bg: #fdf6e8; --err: #a33; --err-bg: #fdeeee; --live: #b8442e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17181a; --panel: #202225; --ink: #ececea; --muted: #9a9a95;
+      --line: #33363a; --accent: #4a9d72; --accent-ink: #0d0f10; --warn: #d9a64a;
+      --warn-bg: #2a2418; --err: #e08585; --err-bg: #2c1c1c; --live: #e8785c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17181a; --panel: #202225; --ink: #ececea; --muted: #9a9a95;
+    --line: #33363a; --accent: #4a9d72; --accent-ink: #0d0f10; --warn: #d9a64a;
+    --warn-bg: #2a2418; --err: #e08585; --err-bg: #2c1c1c; --live: #e8785c;
+  }
+  /* Sits above the tabs rather than inside one, because the archive fills up
+     while you are somewhere else entirely. */
+  .banner {
+    display: none; background: var(--warn-bg); border: 1px solid var(--warn);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
+  }
+  .banner.show { display: block; }
+  .banner .banner-title { font-weight: 600; color: var(--warn); font-size: 14px; }
+  .banner .banner-body { font-size: 13px; margin-top: 4px; line-height: 1.5; }
+  .banner .actions { margin-top: 12px; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 32px 20px 64px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.ok { background: var(--accent); } .dot.bad { background: var(--err); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 20px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .card h2 .hint { font-weight: 400; }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .hint { font-weight: 400; color: var(--muted); }
+  textarea, input[type=text], input[type=number], select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 14px;
+  }
+  textarea { resize: vertical; min-height: 92px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 16px; }
+  .row > div { flex: 1 1 160px; }
+  .check { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; }
+  .check input { margin-top: 3px; flex: none; }
+  .check label { margin: 0; font-weight: 500; }
+  button {
+    background: var(--accent); color: var(--accent-ink); border: 0;
+    padding: 11px 20px; border-radius: 7px; font: inherit; font-weight: 600;
+    cursor: pointer; margin-top: 20px;
+  }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); margin-left: 8px; }
+  button:disabled { opacity: .55; cursor: default; }
+  details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+  summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
+  details .row:first-of-type { margin-top: 14px; }
+  #status { margin-top: 16px; font-size: 13px; color: var(--muted); min-height: 20px; }
+  #err, #warn { display: none; padding: 10px 12px; border-radius: 7px; font-size: 13px; margin-top: 14px; white-space: pre-wrap; }
+  #err { background: var(--err-bg); color: var(--err); }
+  #warn { background: var(--warn-bg); color: var(--warn); }
+  #liveCard, #fileCard { display: none; }
+  audio { width: 100%; margin-top: 4px; }
+  .meta { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 10px; margin-top: 14px; }
+  .stat { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px; }
+  .stat b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .stat span { font-size: 11px; color: var(--muted); }
+  .stat.alert b { color: var(--warn); }
+  .bar { height: 6px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin-top: 14px; }
+  .bar i { display: block; height: 100%; background: var(--accent); width: 0%; transition: width .15s linear; }
+  .badge { font-size: 11px; color: var(--live); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .prep { margin-top: 12px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line);
+          border-radius: 7px; font-size: 13px; white-space: pre-wrap; display: none; }
+  a.dl { color: var(--accent); font-size: 13px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .log { max-height: 130px; overflow-y: auto; font-family: ui-monospace, Menlo, monospace;
+         font-size: 11px; color: var(--muted); margin-top: 12px; }
+
+  /* Tabs -------------------------------------------------------------- */
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 20px; flex-wrap: wrap; }
+  .tab { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent;
+         padding: 9px 14px; margin: 0; border-radius: 0; font-size: 14px; font-weight: 600; }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+  .panel { display: none; } .panel.active { display: block; }
+
+  /* Takes, voice cards ------------------------------------------------ */
+  .take { border: 1px solid var(--line); border-radius: 8px; padding: 13px 15px; margin-top: 10px; background: var(--bg); }
+  .take.playing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .take.saved { border-color: var(--accent); }
+  .take-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; flex-wrap: wrap; }
+  .take-title { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
+          color: var(--muted); font-weight: 500; white-space: nowrap; }
+  .pill.on { color: var(--accent); border-color: var(--accent); }
+  .pill.warnish { color: var(--warn); border-color: var(--warn); }
+  button.small { padding: 6px 12px; font-size: 13px; margin-top: 0; }
+  button.link { background: none; color: var(--accent); border: 0; padding: 4px 6px; margin: 0;
+                font-size: 13px; font-weight: 600; }
+  button.danger { color: var(--err); }
+  .actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+        gap: 5px 14px; font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .kv b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 7px;
+          padding: 10px 12px; font-size: 12.5px; margin-top: 14px; }
+  .note.calm { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+  .msg { font-size: 13px; color: var(--muted); min-height: 20px; margin-top: 14px; }
+  .msg.bad { color: var(--err); }
+  .saveform { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; display: none; }
+  .saveform.open { display: block; }
+  .empty { color: var(--muted); font-size: 13px; padding: 18px 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { background: transparent; color: var(--muted); margin: 0; border-radius: 0;
+                padding: 8px 14px; font-size: 13px; }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); }
+  select[multiple] { height: auto; min-height: 92px; }
+  .swatch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .swatch audio { flex: 1 1 260px; margin: 0; width: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Breeze TTS 2</h1>
+    <span><span class="dot" id="dot"></span> <span class="hint" id="health">checking…</span></span>
+  </header>
+  <div class="sub">Local MLX synthesis on Apple Silicon. Nothing leaves this machine except optional text prep.</div>
+
+  <div class="banner" id="audioWarn">
+    <div class="banner-title" id="audioWarnTitle">Archived audio is taking a lot of disk</div>
+    <div class="banner-body" id="audioWarnBody"></div>
+    <div class="actions">
+      <button type="button" class="small" id="audioWarnExport" style="margin-left:0">
+        Zip the audio and clear it</button>
+      <button type="button" class="link" id="audioWarnRecheck">Re-check now</button>
+      <span class="hint" id="audioWarnMsg"></span>
+    </div>
+    <div class="banner-body" id="audioWarnExports"></div>
+  </div>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="synth">Synthesize</button>
+    <button class="tab" data-tab="design">Design a voice</button>
+    <button class="tab" data-tab="voices">Voice library</button>
+    <button class="tab" data-tab="test">Test a voice</button>
+    <button class="tab" data-tab="system">System speech</button>
+  </nav>
+
+  <section class="panel active" id="tab-synth">
+  <form class="card" id="form">
+    <label for="text">Text</label>
+    <textarea id="text">(sigh) Welcome aboard. Your journey begins now. The engine keeps the model in memory, so every request after the first one starts immediately.</textarea>
+
+    <label for="instruction" style="margin-top:16px">
+      Voice instruction <span class="hint">— describe the voice; enables CFG</span>
+    </label>
+    <input type="text" id="instruction" value="A warm, thoughtful young woman with a clear voice and a calm, reflective delivery.">
+
+    <div class="check">
+      <input type="checkbox" id="prepare">
+      <label for="prepare">Clean up text with Gemini first
+        <span class="hint">— fixes punctuation and adds supported vocal events</span></label>
+    </div>
+    <div class="check">
+      <input type="checkbox" id="dostream" checked>
+      <label for="dostream">Stream and play live
+        <span class="hint">— starts playing on the first chunk; the full file still loads below when done</span></label>
+    </div>
+    <div class="check">
+      <input type="checkbox" id="voicelock" checked>
+      <label for="voicelock">Keep one voice across sentences
+        <span class="hint">— anchors every later chunk to the first one. Untick to hear the raw
+        behaviour, where each sentence invents its own speaker.</span></label>
+    </div>
+
+    <details open>
+      <summary>Playback buffer</summary>
+      <div class="row">
+        <div>
+          <label for="prebuf">Safety buffer: <span id="prebufVal">300</span> ms</label>
+          <input type="range" id="prebuf" min="0" max="1500" step="50" value="300">
+          <div class="hint" style="font-size:12px;margin-top:6px">
+            How much audio to bank before playback starts, and how long to hold at a
+            sentence boundary when generation falls behind. Raise it if playback stutters
+            under CPU load.
+          </div>
+        </div>
+        <div>
+          <label for="rtfmin">Hold below RTF: <span id="rtfminVal">1.05</span>×</label>
+          <input type="range" id="rtfmin" min="1" max="1.5" step="0.05" value="1.05">
+          <div class="hint" style="font-size:12px;margin-top:6px">
+            When the measured realtime factor drops under this, the player pauses at the
+            next sentence boundary to rebuild its buffer — inaudible there, unlike a
+            mid-word gap.
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>Reference audio and mode</summary>
+      <div class="row">
+        <div>
+          <label for="refaudio">Reference audio <span class="hint">— upload</span></label>
+          <input type="file" id="refaudio" accept="audio/*">
+        </div>
+        <div>
+          <label for="refpath">…or server-side path</label>
+          <input type="text" id="refpath" placeholder="/Users/thomas/…/reference_zh.wav">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="reftext">Reference transcript <span class="hint">— must be exact</span></label>
+          <input type="text" id="reftext" placeholder="Exact words spoken in the reference">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="auto">auto</option>
+            <option value="plain">plain</option>
+            <option value="guided">guided (voice design)</option>
+            <option value="clone">clone</option>
+            <option value="edit">edit (voice direction)</option>
+          </select>
+        </div>
+        <div>
+          <label for="cfg">CFG scale</label>
+          <input type="number" id="cfg" value="4" min="0.5" max="10" step="0.5">
+        </div>
+        <div>
+          <label for="maxwords">Max words / chunk</label>
+          <input type="number" id="maxwords" placeholder="35" min="5" max="999">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="prepinstr">Prep instruction <span class="hint">— guides Gemini only</span></label>
+          <input type="text" id="prepinstr" placeholder="Keep it terse and clipped.">
+        </div>
+      </div>
+      <div class="row">
+        <div class="hint" style="font-size:12px">
+          CFG applies only in <code>guided</code> and <code>edit</code>; in <code>plain</code>
+          and <code>clone</code> it is ignored (clamped to 1.0).<br>
+          Vocal events: <code>(laugh) (cough) (clears throat) (sigh)</code> ·
+          <code>[笑] [咳嗽] [清嗓子] [叹气]</code>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>Sampling and limits</summary>
+      <div class="row">
+        <div><label for="seed">Seed <span class="hint">— repeat a take</span></label>
+          <input type="number" id="seed" placeholder="42"></div>
+        <div><label for="temperature">Temperature</label>
+          <input type="number" id="temperature" placeholder="0.9" min="0.1" max="2" step="0.05"></div>
+        <div><label for="reppen">Repetition penalty</label>
+          <input type="number" id="reppen" placeholder="1.1" min="0.5" max="2" step="0.05"></div>
+      </div>
+      <div class="row">
+        <div><label for="topk">Top-k</label>
+          <input type="number" id="topk" placeholder="50" min="0" max="500"></div>
+        <div><label for="topp">Top-p</label>
+          <input type="number" id="topp" placeholder="1.0" min="0.05" max="1" step="0.05"></div>
+        <div><label for="maxnew">Max new tokens</label>
+          <input type="number" id="maxnew" placeholder="1500" min="50" max="8000"></div>
+      </div>
+      <div class="row">
+        <div><label for="maxseq">Max seq len</label>
+          <input type="number" id="maxseq" placeholder="2048" min="256" max="8192"></div>
+        <div><label for="codecframes">Codec chunk frames <span class="hint">— packet size</span></label>
+          <input type="number" id="codecframes" placeholder="2" min="1" max="16"></div>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="greedy">
+        <label for="greedy">Greedy decoding <span class="hint">— deterministic, but flatter</span></label>
+      </div>
+      <div class="row">
+        <div class="hint" style="font-size:12px">Blank fields keep the server default.</div>
+      </div>
+    </details>
+
+    <button type="submit" id="go">Generate speech</button>
+    <button type="button" class="ghost" id="stop" disabled>Stop</button>
+    <div id="status"></div>
+    <div id="err"></div>
+    <div id="warn"></div>
+  </form>
+
+  <div class="card" id="liveCard">
+    <h2><span class="badge">● live</span> Streaming player
+      <span class="hint">— plays as chunks arrive</span></h2>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="stats">
+      <div class="stat"><b id="sRtf">–</b><span>realtime factor</span></div>
+      <div class="stat"><b id="sLead">–</b><span>buffered ahead</span></div>
+      <div class="stat"><b id="sAudio">–</b><span>audio received</span></div>
+      <div class="stat"><b id="sChunks">–</b><span>sentence</span></div>
+      <div class="stat" id="holdStat"><b id="sHolds">0</b><span>buffer holds</span></div>
+      <div class="stat" id="underStat"><b id="sUnder">0</b><span>underruns</span></div>
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="card" id="fileCard">
+    <h2>Complete file <span class="hint">— loads when generation finishes</span></h2>
+    <audio id="audio" controls preload="auto"></audio>
+    <div class="meta" id="meta"></div>
+    <div class="prep" id="prep"></div>
+  </div>
+  </section>
+
+  <!-- ===================== Design a voice ===================== -->
+  <section class="panel" id="tab-design">
+    <div class="card">
+      <h2>Quick voice design
+        <span class="hint">— one script, several takes, keep the one you like</span></h2>
+      <div class="hint" style="font-size:12.5px;margin-bottom:14px">
+        Each take is the same script in a different voice, generated from
+        <code>seed</code>, <code>seed+1</code>, <code>seed+2</code> and so on. Takes play
+        automatically in order as they arrive. Saving one stores its audio as the voice's
+        reference recording together with every setting that produced it, so the voice can
+        speak text it has never seen and still sound like itself.
+      </div>
+
+      <div class="seg" id="dSource">
+        <button type="button" class="on" data-source="design">Design from a description</button>
+        <button type="button" data-source="clone">Clone from a recording</button>
+      </div>
+
+      <div id="dDesignFields" style="margin-top:16px">
+        <label for="dInstruction">Voice description</label>
+        <input type="text" id="dInstruction"
+               value="A warm, thoughtful young woman with a clear voice and a calm, reflective delivery.">
+      </div>
+
+      <div id="dCloneFields" style="margin-top:16px;display:none">
+        <div class="row" style="margin-top:0">
+          <div>
+            <label for="dRefAudio">Recording to clone <span class="hint">— upload</span></label>
+            <input type="file" id="dRefAudio" accept="audio/*">
+          </div>
+          <div>
+            <label for="dRefPath">…or a path on this machine</label>
+            <input type="text" id="dRefPath" placeholder="/Users/thomas/…/reference.wav">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="dRefText">Exact transcript of that recording</label>
+            <input type="text" id="dRefText" placeholder="Word for word, exactly what is said in the file">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="dCloneInstruction">Voice direction <span class="hint">— optional</span></label>
+            <input type="text" id="dCloneInstruction" placeholder="Stay close to the reference tone.">
+          </div>
+        </div>
+        <div class="note">
+          Cloning works from about <b>10 seconds</b> of speech; <b>15 seconds or more</b> is
+          noticeably better. Use one speaker with no music or background noise, and pick a
+          passage that is as varied as possible — mixed sentence lengths, a question and a
+          statement, a real range of pitch and pace. A flat, monotone sample clones as a
+          flat, monotone voice. There is no speech recognition here, so the transcript has
+          to be supplied by hand and has to be exact: a wrong transcript audibly degrades
+          the clone.
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="take-title" style="margin-bottom:6px">Save the recording as a voice</div>
+          <div class="hint" style="font-size:13px;margin-bottom:12px">
+            Skip the takes. A cloned voice is conditioned on the <b>recording</b> every time
+            it speaks — the takes below are an audition, not the voice itself. If you already
+            trust the recording, save it directly: the file above, its transcript, and the
+            voice direction become the voice. Nothing is generated, so this works before the
+            model has finished loading. You can still generate takes afterwards and add the
+            ones you like as tone variations.
+          </div>
+          <div class="row" style="margin-top:0">
+            <div>
+              <label for="dRecName">Voice name</label>
+              <input type="text" id="dRecName" placeholder="e.g. Thomas — reading voice">
+            </div>
+            <div>
+              <label for="dRecDescription">Description <span class="hint">— optional</span></label>
+              <input type="text" id="dRecDescription" placeholder="Where the recording came from">
+            </div>
+          </div>
+          <div class="actions" style="margin-top:14px">
+            <button type="button" class="small" id="dRecSave" style="margin-left:0">
+              Save this recording as a voice</button>
+            <span class="hint" id="dRecMsg"></span>
+          </div>
+        </div>
+      </div>
+
+      <label for="dText" style="margin-top:16px">
+        Preview script <span class="hint">— what every take says</span>
+      </label>
+      <textarea id="dText"></textarea>
+      <div class="hint" style="font-size:12px;margin-top:6px">
+        This becomes the voice's reference recording, so make it long enough to clone from —
+        roughly 40 words or more — and varied. Its exact words are stored as the transcript.
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="dCount">How many takes <span class="hint">— 1 to 20</span></label>
+          <input type="number" id="dCount" value="5" min="1" max="20" step="1">
+        </div>
+        <div>
+          <label for="dSeed">Base seed</label>
+          <input type="number" id="dSeed" placeholder="42">
+        </div>
+        <div>
+          <label for="dCfg">CFG scale</label>
+          <input type="number" id="dCfg" value="4" min="0.5" max="10" step="0.5">
+        </div>
+      </div>
+
+      <details>
+        <summary>Sampling</summary>
+        <div class="row">
+          <div><label for="dTemperature">Temperature</label>
+            <input type="number" id="dTemperature" placeholder="0.9" min="0.1" max="2" step="0.05"></div>
+          <div><label for="dTopK">Top-k</label>
+            <input type="number" id="dTopK" placeholder="50" min="0" max="500"></div>
+          <div><label for="dTopP">Top-p</label>
+            <input type="number" id="dTopP" placeholder="1.0" min="0.05" max="1" step="0.05"></div>
+        </div>
+        <div class="row">
+          <div><label for="dRepPen">Repetition penalty</label>
+            <input type="number" id="dRepPen" placeholder="1.1" min="0.5" max="2" step="0.05"></div>
+          <div><label for="dMaxWords">Max words / chunk</label>
+            <input type="number" id="dMaxWords" placeholder="35" min="5" max="999"></div>
+        </div>
+        <div class="row">
+          <div class="hint" style="font-size:12px">Blank fields keep the server default. Every value
+            used is stored on the voice you save.</div>
+        </div>
+      </details>
+
+      <div class="check">
+        <input type="checkbox" id="dAutoplay" checked>
+        <label for="dAutoplay">Play each take as it arrives
+          <span class="hint">— in order, first to last</span></label>
+      </div>
+
+      <button type="button" id="dGo">Generate takes</button>
+      <button type="button" class="ghost" id="dStop" disabled>Stop</button>
+      <div class="msg" id="dMsg"></div>
+    </div>
+
+    <div class="card" id="dResultsCard" style="display:none">
+      <h2>Takes <span class="hint">— pick one and save it as a voice</span></h2>
+      <div class="actions" style="margin-bottom:4px">
+        <button type="button" class="small ghost" id="dPlayAll" style="margin-left:0">Play all again</button>
+        <button type="button" class="small ghost" id="dClear">Clear</button>
+      </div>
+      <div id="dTakes"></div>
+    </div>
+  </section>
+
+  <!-- ===================== Voice library ===================== -->
+  <section class="panel" id="tab-voices">
+    <div class="card">
+      <h2>Voice library <span class="hint">— every saved profile on this machine</span></h2>
+      <div class="row" style="margin-top:14px">
+        <div>
+          <label for="vSearch">Search</label>
+          <input type="text" id="vSearch" placeholder="name, description, tag, instruction…">
+        </div>
+        <div>
+          <label for="vOrigin">Origin</label>
+          <select id="vOrigin">
+            <option value="">all</option>
+            <option value="designed">designed</option>
+            <option value="cloned">cloned</option>
+          </select>
+        </div>
+        <div>
+          <label for="vSort">Sort</label>
+          <select id="vSort">
+            <option value="created_at_unix">newest first</option>
+            <option value="name">name</option>
+            <option value="updated_at_unix">recently edited</option>
+          </select>
+        </div>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="vFavs">
+        <label for="vFavs">Favourites only</label>
+      </div>
+      <div class="msg" id="vMsg"></div>
+    </div>
+    <div id="vList"></div>
+  </section>
+
+  <!-- ===================== Test a voice ===================== -->
+  <!-- ===================================================================
+       System speech: the global hotkey path.
+
+       Everything the hotkey needs lives on the server, so this page is the
+       only place any of it is configured -- including the shortcuts
+       themselves. The hotkey host, whichever one this platform uses, only
+       reads them and posts text.
+  ==================================================================== -->
+  <section class="panel" id="tab-system">
+    <div class="card">
+      <div class="take-head">
+        <div class="take-title">Speak anything you copy</div>
+        <div class="actions">
+          <button type="button" class="small ghost" id="yStop" style="margin-left:0">Stop speaking</button>
+          <button type="button" class="link" id="yRefresh">Refresh</button>
+        </div>
+      </div>
+      <div class="hint" style="font-size:13px;margin-top:4px">
+        Copy text anywhere on this machine and press the hotkey. The server reads it, speaks
+        it with the voice below, and plays it on this machine's speakers — no browser tab
+        needed.
+      </div>
+      <div class="kv" style="margin-top:12px">
+        <span>playback <b id="yPlayState">–</b></span>
+        <span>paragraph <b id="yPara">–</b></span>
+        <span>language model <b id="yLlmState">–</b></span>
+        <span>clipboard <b id="yClip">–</b></span>
+        <span>output <b id="yRate">–</b></span>
+      </div>
+      <div class="actions" style="margin-top:10px">
+        <button type="button" class="small ghost" id="yPrev" style="margin-left:0">◀ Previous paragraph</button>
+        <button type="button" class="small ghost" id="yNext">Next paragraph ▶</button>
+        <span class="hint" id="yParaNote"></span>
+      </div>
+      <div class="msg" id="yMsg"></div>
+    </div>
+
+    <div class="card">
+      <div class="take-title" style="margin-bottom:12px">Voice</div>
+      <label for="yVoice">Voice used by both hotkeys</label>
+      <select id="yVoice"></select>
+      <div class="hint" id="yVoiceNote" style="margin-top:8px"></div>
+      <div class="actions" style="margin-top:14px">
+        <button type="button" class="small" id="ySpeakClip">Speak the clipboard</button>
+        <button type="button" class="small ghost" id="ySpeakClipLlm">Speak it through the model</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="take-title" style="margin-bottom:6px">Tone rotation</div>
+      <div class="hint" style="font-size:13px;margin-bottom:12px">
+        A two-page article read in one unvarying tone gets tiring. Rotation swaps between the
+        voice's reference recordings as the read goes on — same speaker, different colour.
+        It only switches at a paragraph break, so the change is never audible mid-sentence.
+        Add variations to a voice on the <b>Voice library</b> tab.
+      </div>
+      <label class="check">
+        <input type="checkbox" id="yRotOverride">
+        <span>Override each voice's own rotation settings with the ones below</span>
+      </label>
+      <div class="row" style="margin-top:14px">
+        <div>
+          <label class="check"><input type="checkbox" id="yRotEnabled"><span>Rotate</span></label>
+        </div>
+        <div>
+          <label for="yRotEvery">Switch after</label>
+          <input type="number" id="yRotEvery" min="20" max="100000" step="50">
+          <div class="hint">words</div>
+        </div>
+        <div>
+          <label for="yRotMode">Order</label>
+          <select id="yRotMode"><option value="random">Random</option><option value="sequence">In order</option></select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div>
+          <label for="yRotBoundary">Switch at</label>
+          <select id="yRotBoundary">
+            <option value="paragraph">Paragraph breaks</option>
+            <option value="sentence">Sentence breaks</option>
+          </select>
+          <div class="hint">Text with no blank lines falls back to sentence breaks automatically.</div>
+        </div>
+        <div>
+          <label for="yRotTags">Only use references tagged</label>
+          <input type="text" id="yRotTags" placeholder="calm, bright — blank means all">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="take-title" style="margin-bottom:6px">Language model pass</div>
+      <div class="hint" style="font-size:13px;margin-bottom:12px">
+        The second hotkey sends the text to Gemini Flash Lite on Vertex first. Its output is
+        streamed straight into the engine sentence by sentence, so speech starts before the
+        rewrite has finished. The prompt below is what it runs; edit it and save.
+      </div>
+      <div class="row">
+        <div>
+          <label for="yLlmInstruction">Standing direction (optional)</label>
+          <input type="text" id="yLlmInstruction" placeholder="Keep it terse.">
+        </div>
+        <div>
+          <label for="yLlmTemp">Temperature</label>
+          <input type="number" id="yLlmTemp" min="0" max="2" step="0.05">
+        </div>
+      </div>
+      <label for="yPrompt" style="margin-top:14px">Prompt</label>
+      <textarea id="yPrompt" style="min-height:280px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px"></textarea>
+      <div class="hint" style="margin-top:8px">
+        The reply must start with the marker <code>&lt;&lt;&lt;SPEAK&gt;&gt;&gt;</code>: everything before it is
+        discarded, which is what stops a stray “Sure, here you go:” from being read aloud.
+        Keep that line if you rewrite the prompt.
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <button type="button" class="small" id="yPromptSave">Save prompt</button>
+        <button type="button" class="small ghost" id="yPromptReset">Restore default</button>
+        <span class="hint" id="yPromptMsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="take-title" style="margin-bottom:12px">Playback and history</div>
+      <div class="row">
+        <div>
+          <label for="yDevice">Output device</label>
+          <select id="yDevice"></select>
+        </div>
+        <div>
+          <label for="yPrebuffer">Safety buffer</label>
+          <input type="number" id="yPrebuffer" min="0" max="5000" step="50">
+          <div class="hint">ms buffered before the first word</div>
+        </div>
+        <div>
+          <label for="ySkipDebounce">Skip settles after</label>
+          <input type="number" id="ySkipDebounce" min="0" max="10000" step="100">
+          <div class="hint">ms of no further skip press before the next paragraph is generated</div>
+        </div>
+        <div>
+          <label for="yMaxEntries">Keep</label>
+          <input type="number" id="yMaxEntries" min="1" max="10000" step="10">
+          <div class="hint">utterances on disk</div>
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <label class="check"><input type="checkbox" id="yPauseOnDevice">
+          <span>Pause when the output device changes — headphones disconnecting stops
+          the read instead of moving it to the laptop speakers</span></label>
+      </div>
+      <div style="margin-top:12px">
+        <label class="check"><input type="checkbox" id="yArchive">
+          <span>Save every generation — input text, model output, and metadata</span></label>
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="yKeepAudio">
+          <span>Save the audio too</span></label>
+      </div>
+      <div class="actions" style="margin-top:14px">
+        <button type="button" class="small" id="ySave">Save settings</button>
+        <span class="hint" id="ySaveMsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="take-head">
+        <div class="take-title">Recent</div>
+        <div class="actions">
+          <button type="button" class="link" id="yHistoryReload">Reload</button>
+          <button type="button" class="link danger" id="yHistoryClear">Clear history</button>
+        </div>
+      </div>
+      <div id="yHistory"></div>
+    </div>
+
+    <!-- ==================================================================
+         Shortcuts.
+
+         Edited here rather than in a config file because they are the whole
+         interface on the hotkey path -- there is no window to click in -- and
+         because both hotkey hosts read them from the server, so this is the
+         one place that changes them on either machine.
+
+         Click a field and press the combination. Typing it works too: the
+         server normalizes and validates whatever arrives, which is also what
+         catches "you have bound two actions to the same keys".
+    =================================================================== -->
+    <div class="card">
+      <div class="take-head">
+        <div class="take-title">Shortcuts</div>
+        <div class="actions">
+          <button type="button" class="link" id="yKeysReset">Restore defaults</button>
+        </div>
+      </div>
+      <div class="hint" style="font-size:13px;margin-top:4px;margin-bottom:12px">
+        Click a box and press the keys you want. Every shortcut needs at least one
+        modifier — a bare letter would fire while you were typing it.
+      </div>
+      <div id="yKeys"></div>
+      <div class="actions" style="margin-top:14px">
+        <button type="button" class="small" id="yKeysSave" style="margin-left:0">Save shortcuts</button>
+        <span class="hint" id="yKeysNote"></span>
+      </div>
+      <div class="msg" id="yKeysMsg"></div>
+    </div>
+
+    <div class="card">
+      <div class="take-title" style="margin-bottom:6px">Hotkey setup</div>
+      <div class="hint" style="font-size:13px" id="yHostNote"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="tab-test">
+    <div class="card">
+      <h2>Test a voice <span class="hint">— does it still sound like itself on new text?</span></h2>
+      <label for="tVoice" style="margin-top:14px">Voice profile</label>
+      <select id="tVoice"></select>
+
+      <div id="tProfile" style="display:none">
+        <div class="kv" id="tParams"></div>
+        <div class="swatch">
+          <span class="hint" style="font-size:12px">Saved sample:</span>
+          <audio id="tSample" controls preload="none"></audio>
+        </div>
+        <div class="hint" style="font-size:12px;margin-top:8px" id="tRefText"></div>
+      </div>
+
+      <label style="margin-top:18px">Reproduction method</label>
+      <div class="seg" id="tMethod">
+        <button type="button" class="on" data-method="anchor">Anchor to saved sample</button>
+        <button type="button" data-method="params">Replay saved parameters only</button>
+      </div>
+      <div class="hint" style="font-size:12px;margin-top:8px" id="tMethodNote"></div>
+
+      <label for="tLines" style="margin-top:18px">
+        Test lines <span class="hint">— one per line, each generated separately</span>
+      </label>
+      <textarea id="tLines" style="min-height:120px">The quarterly numbers came in higher than anyone expected.
+Could you hand me the small screwdriver, the one with the red handle?
+It rained for six days straight, and then, on the seventh, nothing.</textarea>
+
+      <div class="row">
+        <div>
+          <label for="tSeed">Seed override <span class="hint">— blank keeps the saved seed</span></label>
+          <input type="number" id="tSeed" placeholder="saved seed">
+        </div>
+        <div>
+          <label for="tText2">&nbsp;</label>
+          <div class="check" style="margin-top:0">
+            <input type="checkbox" id="tVarySeed">
+            <label for="tVarySeed">Vary the seed per line
+              <span class="hint">— when anchored, the voice should hold anyway</span></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="check">
+        <input type="checkbox" id="tAutoplay" checked>
+        <label for="tAutoplay">Play each line as it generates
+          <span class="hint">— streams live; the next line waits until this one has finished
+          playing. The complete file is kept either way.</span></label>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="tPrepare">
+        <label for="tPrepare">Clean up text with Gemini first
+          <span class="hint">— not configured yet on this machine; the request still succeeds
+          and reports why it was skipped</span></label>
+      </div>
+
+      <button type="button" id="tGo">Generate every line</button>
+      <button type="button" class="ghost" id="tStop" disabled>Stop</button>
+      <div class="msg" id="tMsg"></div>
+    </div>
+
+    <div class="card" id="tResultsCard" style="display:none">
+      <h2>Results <span class="hint">— compare each against the saved sample above</span></h2>
+      <div id="tResults"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let lastUrl = null, aborter = null, currentPlayer = null;
+
+for (const [slider, out, fix] of [['prebuf','prebufVal',0], ['rtfmin','rtfminVal',2]]) {
+  $(slider).addEventListener('input', () => $(out).textContent = (+$(slider).value).toFixed(fix));
+}
+
+fetch('/health').then(r => r.json()).then(h => {
+  const ok = h.status === 'ok';
+  $('dot').className = 'dot ' + (ok ? 'ok' : 'bad');
+  $('health').textContent = ok ? `ready · ${h.sample_rate} Hz` : h.status;
+}).catch(() => { $('dot').className = 'dot bad'; $('health').textContent = 'unreachable'; });
+
+/* =========================================================================
+   Archived audio, and how much of the disk it is holding
+
+   Every utterance the hotkeys speak is kept: the text, which is kilobytes and
+   worth having forever, and the audio, which is megabytes and worth having
+   until you have heard it. The banner lives above the tabs because the archive
+   fills up while you are on some other tab entirely.
+
+   The server measures at startup and once an hour; this only reads the figure,
+   so polling it costs nothing.
+========================================================================= */
+const MIB = 1024 * 1024;
+const formatBytes = value => value >= 1024 * MIB
+  ? `${(value / (1024 * MIB)).toFixed(2)} GB`
+  : `${(value / MIB).toFixed(0)} MB`;
+
+function renderExports(list) {
+  if (!list || !list.length) { $('audioWarnExports').innerHTML = ''; return; }
+  $('audioWarnExports').innerHTML = '<div style="margin-top:10px">Waiting to be moved: '
+    + list.map(item =>
+        `<a href="/v1/system-speech/audio-export/${encodeURIComponent(item.file)}"
+            download>${esc(item.file)}</a> (${formatBytes(item.bytes)})`
+      ).join(' · ')
+    + '</div>';
+}
+
+async function refreshAudioUsage() {
+  try {
+    const usage = await (await api('/v1/system-speech/audio-usage')).json();
+    const pending = (usage.exports || []).length;
+    $('audioWarn').classList.toggle('show', !!usage.over || !!pending);
+    const held = `${formatBytes(usage.bytes)} of recordings across ${usage.files} `
+      + `utterance${usage.files === 1 ? '' : 's'}`;
+    $('audioWarnTitle').textContent = usage.over
+      ? 'Archived audio is taking a lot of disk'
+      : 'An exported zip is waiting to be moved';
+    $('audioWarnBody').textContent = usage.over
+      ? `${held}, past the ${formatBytes(usage.warn_bytes)} mark. Zipping puts every `
+        + 'recording into one file under state/exports/ and removes them from the '
+        + 'archive. The written history stays — only the audio goes.'
+      : `${held} — under the ${formatBytes(usage.warn_bytes)} mark.`;
+    $('audioWarnExport').disabled = !usage.files;
+    renderExports(usage.exports);
+    return usage;
+  } catch (_) { /* the server may be reloading; the next tick retries */ }
+}
+
+$('audioWarnRecheck').addEventListener('click', () => {
+  setMsg('audioWarnMsg', 'Checking…');
+  refreshAudioUsage().then(usage => setMsg('audioWarnMsg',
+    usage && !usage.over ? 'Under the limit now.' : ''));
+});
+
+$('audioWarnExport').addEventListener('click', async () => {
+  if (!confirm('Zip every archived recording and delete the recordings?\n\n'
+      + 'The zip is written to state/exports/ and verified before anything is '
+      + 'removed. The written history — input, model output, what was spoken — '
+      + 'stays exactly as it is.')) return;
+  $('audioWarnExport').disabled = true;
+  setMsg('audioWarnMsg', 'Zipping… this can take a minute for a large archive.');
+  try {
+    const result = await (await postJson('/v1/system-speech/audio-export', {})).json();
+    setMsg('audioWarnMsg',
+      `${result.entries} recording${result.entries === 1 ? '' : 's'} → `
+      + `${result.file} (${formatBytes(result.zip_bytes)}), `
+      + `${formatBytes(result.freed_bytes)} freed.`);
+    await refreshAudioUsage();
+    if (typeof loadHistory === 'function') loadHistory().catch(() => {});
+  } catch (error) {
+    setMsg('audioWarnMsg', error.message, true);
+  } finally {
+    $('audioWarnExport').disabled = false;
+  }
+});
+
+
+/* ---------------------------------------------------------------------------
+   Streaming playback queue (AudioWorklet ring buffer).
+
+   The obvious approach -- one AudioBufferSourceNode per arriving block,
+   scheduled back to back -- crackles, for two reasons:
+
+     1. If the AudioContext runs at the device rate (48 kHz on macOS) while the
+        buffers are 24 kHz, every block is resampled INDEPENDENTLY. The
+        interpolator cannot see the neighbouring block, so it leaves a
+        discontinuity at each edge. Our blocks are 160 ms, so that is a click
+        roughly six times a second.
+     2. `nextTime += duration` accumulates floating-point error and drifts off
+        exact sample frames, adding sub-sample misalignment on top.
+
+   So instead: pin the context to the stream's own rate, and use ONE worklet
+   node that pulls from a ring buffer. There is no per-block scheduling and no
+   per-block resampling left to go wrong -- the audio is reassembled sample for
+   sample, exactly as the WAV file player would.
+--------------------------------------------------------------------------- */
+const WORKLET_SOURCE = `
+class PCMPlayer extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    const opts = options.processorOptions || {};
+    this.queue = [];          // Float32Array blocks awaiting playback
+    this.offset = 0;          // read cursor into queue[0]
+    this.available = 0;       // frames buffered
+    this.prebuffer = opts.prebufferFrames || 0;
+    this.playing = false;
+    this.holdFrames = 0;
+    this.underruns = 0;
+    this.ended = false;
+    this.tick = 0;
+    this.port.onmessage = event => {
+      const message = event.data;
+      if (message.type === 'audio') {
+        this.queue.push(message.pcm);
+        this.available += message.pcm.length;
+      } else if (message.type === 'hold') {
+        this.holdFrames += message.frames;
+      } else if (message.type === 'prebuffer') {
+        this.prebuffer = message.frames;
+      } else if (message.type === 'end') {
+        this.ended = true;
+      }
+    };
+  }
+
+  report() {
+    this.port.postMessage({
+      available: this.available, underruns: this.underruns,
+      playing: this.playing, holding: this.holdFrames > 0
+    });
+  }
+
+  process(inputs, outputs) {
+    const output = outputs[0][0];
+    if (!output) return true;
+    const frames = output.length;
+    let i = 0;
+
+    // Bank the safety buffer before the first sample is audible. After an
+    // underrun we drop back into this state and rebuild, rather than
+    // stuttering repeatedly.
+    if (!this.playing) {
+      // Once generation has ended there is nothing left to bank, so a clip
+      // shorter than the safety buffer must start anyway rather than wait for
+      // audio that will never arrive.
+      if (this.available >= this.prebuffer || this.ended) {
+        this.playing = true;
+      } else {
+        output.fill(0);
+        if (++this.tick % 16 === 0) this.report();
+        return true;
+      }
+    }
+
+    // Deliberate pause requested at a sentence boundary.
+    while (i < frames && this.holdFrames > 0) { output[i++] = 0; this.holdFrames--; }
+
+    while (i < frames) {
+      if (this.queue.length === 0) {
+        while (i < frames) output[i++] = 0;
+        if (!this.ended) { this.underruns++; this.playing = false; }
+        break;
+      }
+      const head = this.queue[0];
+      const take = Math.min(frames - i, head.length - this.offset);
+      output.set(head.subarray(this.offset, this.offset + take), i);
+      i += take;
+      this.offset += take;
+      this.available -= take;
+      if (this.offset >= head.length) { this.queue.shift(); this.offset = 0; }
+    }
+
+    if (++this.tick % 16 === 0) this.report();
+    return true;
+  }
+}
+registerProcessor('pcm-player', PCMPlayer);
+`;
+
+class StreamPlayer {
+  constructor(sampleRate, prebufferSec) {
+    this.streamRate = sampleRate;
+    this.prebuffer = prebufferSec;
+    this.underruns = 0;
+    this.holds = 0;
+    this.available = 0;
+    this.resampleRatio = 1;
+    this.residual = null;     // carried across blocks so the fallback has no seams
+    this.phase = 0;
+    this.ready = false;
+  }
+
+  async start() {
+    // Ask for the stream's own rate so nothing has to be resampled per block.
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: this.streamRate });
+    } catch (_) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    await this.ctx.resume();
+    this.resampleRatio = this.streamRate / this.ctx.sampleRate;
+    this.rateMismatch = Math.abs(this.ctx.sampleRate - this.streamRate) > 1;
+
+    const url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }));
+    await this.ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+
+    this.node = new AudioWorkletNode(this.ctx, 'pcm-player', {
+      numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
+      processorOptions: { prebufferFrames: Math.round(this.prebuffer * this.ctx.sampleRate) }
+    });
+    this.node.port.onmessage = event => {
+      const stats = event.data;
+      this.available = stats.available;
+      this.underruns = stats.underruns;
+    };
+    this.node.connect(this.ctx.destination);
+    this.ready = true;
+  }
+
+  // Seconds of audio buffered but not yet heard.
+  get lead() { return this.ctx ? this.available / this.ctx.sampleRate : 0; }
+
+  /* Only used if the browser refuses an explicit context rate. Linear
+     interpolation, but with the phase and last sample carried BETWEEN blocks,
+     so the seams that broke the per-buffer approach cannot occur. */
+  _resample(input) {
+    const ratio = this.resampleRatio;
+    const previous = this.residual;
+    const source = previous ? (() => {
+      const joined = new Float32Array(previous.length + input.length);
+      joined.set(previous); joined.set(input, previous.length);
+      return joined;
+    })() : input;
+
+    const out = [];
+    let position = this.phase;
+    while (position < source.length - 1) {
+      const index = Math.floor(position);
+      const fraction = position - index;
+      out.push(source[index] * (1 - fraction) + source[index + 1] * fraction);
+      position += ratio;
+    }
+    const consumed = Math.floor(position);
+    this.residual = source.slice(Math.max(0, consumed));
+    this.phase = position - consumed;
+    return Float32Array.from(out);
+  }
+
+  push(float32) {
+    if (!this.ready || !float32.length) return;
+    const pcm = this.rateMismatch ? this._resample(float32) : float32;
+    if (!pcm.length) return;
+    this.node.port.postMessage({ type: 'audio', pcm }, [pcm.buffer]);
+  }
+
+  hold(seconds) {
+    if (!this.ready) return;
+    this.holds++;
+    this.node.port.postMessage({ type: 'hold', frames: Math.round(seconds * this.ctx.sampleRate) });
+  }
+
+  finish() { if (this.ready) this.node.port.postMessage({ type: 'end' }); }
+
+  /* Resolves once everything pushed has actually been heard. Callers use this
+     to keep takes from overlapping: the next stream waits for this one to
+     finish playing. The deadline is a safety net -- a stalled context must not
+     wedge the queue forever. */
+  async drained(timeoutSeconds = 300) {
+    const deadline = performance.now() + timeoutSeconds * 1000;
+    while (this.ready && this.lead > 0.05 && performance.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 80));
+    }
+  }
+
+  stop() {
+    if (!this.ctx) return;
+    try { this.node.disconnect(); } catch (_) {}
+    this.ctx.close().catch(() => {});
+    this.ready = false;
+  }
+}
+
+const b64ToInt16 = b64 => {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2);
+};
+const int16ToFloat32 = pcm => {
+  const out = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768;
+  return out;
+};
+
+// Assemble the collected PCM into a WAV file for the non-streaming player.
+function wavBlob(chunks, totalSamples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + totalSamples * 2);
+  const view = new DataView(buffer);
+  const ascii = (offset, text) => { for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i)); };
+  ascii(0, 'RIFF'); view.setUint32(4, 36 + totalSamples * 2, true); ascii(8, 'WAVE');
+  ascii(12, 'fmt '); view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  ascii(36, 'data'); view.setUint32(40, totalSamples * 2, true);
+  let offset = 44;
+  for (const chunk of chunks) {
+    new Int16Array(buffer, offset, chunk.length).set(chunk);
+    offset += chunk.length * 2;
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function collectFields() {
+  // Blank values are dropped so the server keeps its own defaults.
+  const raw = {
+    text: $('text').value.trim(),
+    instruction: $('instruction').value.trim(),
+    ref_text: $('reftext').value.trim(),
+    ref_audio_path: $('refpath').value.trim(),
+    mode: $('mode').value,
+    cfg_scale: $('cfg').value,
+    max_words: $('maxwords').value,
+    prepare: $('prepare').checked ? 'true' : '',
+    prep_instruction: $('prepinstr').value.trim(),
+    seed: $('seed').value,
+    temperature: $('temperature').value,
+    top_k: $('topk').value,
+    top_p: $('topp').value,
+    repetition_penalty: $('reppen').value,
+    max_new_tokens: $('maxnew').value,
+    max_seq_len: $('maxseq').value,
+    codec_chunk_frames: $('codecframes').value,
+    greedy: $('greedy').checked ? 'true' : '',
+    // Always sent: the server defaults this on, so unticking has to be explicit.
+    voice_lock: $('voicelock').checked ? 'true' : 'false'
+  };
+  const fields = {};
+  for (const [key, value] of Object.entries(raw)) if (value !== '') fields[key] = value;
+  return fields;
+}
+
+async function send(fields, extra) {
+  const file = $('refaudio').files[0];
+  const body = { ...fields, ...extra };
+  aborter = new AbortController();
+  if (file) {                       // uploads require multipart
+    const form = new FormData();
+    for (const [key, value] of Object.entries(body)) form.append(key, value);
+    form.append('ref_audio', file);
+    return fetch('/v1/audio/speech', { method: 'POST', body: form, signal: aborter.signal });
+  }
+  return fetch('/v1/audio/speech', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body), signal: aborter.signal
+  });
+}
+
+async function failure(response) {
+  let detail = `HTTP ${response.status}`;
+  try { detail = (await response.json()).detail || detail; } catch (_) {}
+  return new Error(detail);
+}
+
+function logLine(text) {
+  $('log').insertAdjacentHTML('beforeend', text + '<br>');
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+function showFile(blob, info) {
+  if (lastUrl) URL.revokeObjectURL(lastUrl);
+  lastUrl = URL.createObjectURL(blob);
+  const player = $('audio');
+  player.src = lastUrl;          // deliberately NOT autoplayed
+  player.load();
+  $('fileCard').style.display = 'block';
+  $('meta').innerHTML = info.map(part => `<span>${part}</span>`).join('') +
+    `<a class="dl" href="${lastUrl}" download="breeze.wav">download .wav</a>`;
+}
+
+$('stop').addEventListener('click', () => {
+  if (aborter) aborter.abort();
+  if (currentPlayer) { currentPlayer.stop(); currentPlayer = null; }
+});
+
+$('form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const fields = collectFields();
+  if (!fields.text) { showError('Enter some text first.'); return; }
+
+  $('go').disabled = true; $('stop').disabled = false;
+  $('err').style.display = 'none'; $('warn').style.display = 'none';
+  $('prep').style.display = 'none'; $('fileCard').style.display = 'none';
+  $('log').innerHTML = '';
+  if (currentPlayer) { currentPlayer.stop(); currentPlayer = null; }
+  const streaming = $('dostream').checked;
+  $('liveCard').style.display = streaming ? 'block' : 'none';
+  $('status').textContent = streaming ? 'Connecting…' : 'Generating…';
+  const started = performance.now();
+
+  try {
+    if (streaming) await runStreaming(fields, started);
+    else await runComplete(fields, started);
+  } catch (error) {
+    if (error.name === 'AbortError') $('status').textContent = 'Stopped.';
+    else { showError(error.message); $('status').textContent = ''; }
+  } finally {
+    $('go').disabled = false; $('stop').disabled = true; aborter = null;
+  }
+});
+
+async function runComplete(fields, started) {
+  const response = await send(fields, {});
+  if (!response.ok) throw await failure(response);
+  const blob = await response.blob();
+  const elapsed = (performance.now() - started) / 1000;
+  const duration = response.headers.get('x-breeze-duration');
+  showFile(blob, [
+    `${duration ?? '?'}s audio`,
+    `${response.headers.get('x-breeze-chunks')} chunk(s)`,
+    `mode: ${response.headers.get('x-breeze-mode')}`,
+    `cfg: ${response.headers.get('x-breeze-cfg-scale')}`,
+    `generated in ${elapsed.toFixed(1)}s`,
+    duration ? `${(duration / elapsed).toFixed(2)}× realtime` : ''
+  ].filter(Boolean));
+  await maybeShowPrep(response, fields);
+  $('status').textContent = '';
+}
+
+async function runStreaming(fields, started) {
+  const prebuffer = +$('prebuf').value / 1000;
+  const rtfFloor = +$('rtfmin').value;
+  const response = await send(fields, { format: 'sse' });
+  if (!response.ok) throw await failure(response);
+
+  let sampleRate = 24000, totalChunks = 0;
+  // Build the audio graph inside the click's user-activation window.
+  const player = new StreamPlayer(sampleRate, prebuffer);
+  await player.start();
+  currentPlayer = player;
+  let firstAudioAt = null, totalSamples = 0;
+  const pcmChunks = [];
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '', eventName = null;
+
+  const stats = () => {
+    if (!player || !player.ready) return;
+    $('sLead').textContent = player.lead.toFixed(2) + 's';
+    $('sHolds').textContent = player.holds;
+    $('sUnder').textContent = player.underruns;
+    $('underStat').className = 'stat' + (player.underruns ? ' alert' : '');
+    $('holdStat').className = 'stat' + (player.holds ? ' alert' : '');
+  };
+  const ticker = setInterval(stats, 100);
+
+  const handle = (name, data) => {
+    if (name === 'start') {
+      sampleRate = data.sample_rate;
+      totalChunks = data.chunks;
+      // Created before the fetch; just confirm the rate the server reports.
+      if (sampleRate !== player.streamRate) logLine(`note: server rate ${sampleRate} Hz`);
+      $('status').textContent = 'Streaming…';
+      logLine(`start · ${data.chunks} chunk(s) · mode ${data.mode} · cfg ${data.cfg_scale}`);
+      if (data.prep_error) {
+        $('warn').textContent = 'Text prep was skipped, raw text used: ' + data.prep_error;
+        $('warn').style.display = 'block';
+      }
+    } else if (name === 'audio') {
+      if (firstAudioAt === null) {
+        firstAudioAt = (performance.now() - started) / 1000;
+        logLine(`first audio at ${firstAudioAt.toFixed(2)}s`);
+      }
+      const pcm = b64ToInt16(data.pcm);
+      pcmChunks.push(pcm);
+      totalSamples += pcm.length;
+      player.push(int16ToFloat32(pcm));
+      $('sRtf').textContent = data.rtf.toFixed(2) + '×';
+      $('sAudio').textContent = data.audio_seconds.toFixed(1) + 's';
+      $('bar').style.width = Math.min(100, (data.chunk + 1) / totalChunks * 100) + '%';
+    } else if (name === 'boundary') {
+      $('sChunks').textContent = `${data.chunk + 1}/${data.chunks_total}`;
+      // Generation is only just keeping up. Hold at this sentence boundary --
+      // a pause here is natural, whereas an underrun mid-word is not.
+      const last = data.chunk + 1 >= data.chunks_total;
+      if (!last && data.rtf < rtfFloor && player.lead < prebuffer * 2) {
+        player.hold(prebuffer);
+        logLine(`hold ${(prebuffer * 1000) | 0}ms after sentence ${data.chunk + 1} · rtf ${data.rtf.toFixed(2)} < ${rtfFloor}`);
+      } else {
+        logLine(`sentence ${data.chunk + 1}/${data.chunks_total} · rtf ${data.rtf.toFixed(2)} · lead ${player.lead.toFixed(2)}s`);
+      }
+    } else if (name === 'error') {
+      throw new Error(data.message);
+    } else if (name === 'end') {
+      player.finish();
+      logLine(`end · ${data.audio_seconds}s in ${data.elapsed}s · ${data.rtf.toFixed(2)}× realtime`);
+      $('sRtf').textContent = data.rtf.toFixed(2) + '×';
+      const wall = (performance.now() - started) / 1000;
+      showFile(wavBlob(pcmChunks, totalSamples, sampleRate), [
+        `${data.audio_seconds}s audio`,
+        `${totalChunks} chunk(s)`,
+        `first audio ${firstAudioAt !== null ? firstAudioAt.toFixed(2) : '?'}s`,
+        `generated in ${wall.toFixed(1)}s`,
+        `${data.rtf.toFixed(2)}× realtime`,
+        player.underruns ? `${player.underruns} underrun(s)` : 'no underruns'
+      ]);
+      $('status').textContent = 'Done — playing live; complete file below.';
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE frames are separated by a blank line.
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop();
+      for (const frame of frames) {
+        eventName = null;
+        let payload = '';
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event: ')) eventName = line.slice(7);
+          else if (line.startsWith('data: ')) payload += line.slice(6);
+        }
+        if (eventName && payload) handle(eventName, JSON.parse(payload));
+      }
+    }
+  } finally {
+    clearInterval(ticker);
+    stats();
+  }
+  await maybeShowPrep(null, fields);
+}
+
+async function maybeShowPrep(response, fields) {
+  if (response && response.headers.get('x-breeze-prep-error')) {
+    $('warn').textContent = 'Text prep was skipped, raw text used: ' + response.headers.get('x-breeze-prep-error');
+    $('warn').style.display = 'block';
+    return;
+  }
+  if (!fields.prepare) return;
+  try {
+    const prepared = await fetch('/v1/text/prepare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: fields.text, prep_instruction: fields.prep_instruction })
+    });
+    if (prepared.ok) {
+      $('prep').textContent = 'Prepared text:\n' + (await prepared.json()).text;
+      $('prep').style.display = 'block';
+    }
+  } catch (_) {}
+}
+
+function showError(message) { $('err').textContent = message; $('err').style.display = 'block'; }
+</script>
+
+<script>
+/* ===========================================================================
+   Voice design, library and reproducibility testing.
+
+   The point of the whole flow: a seed makes a take repeatable, but it does NOT
+   carry a voice onto different words -- with no reference recording the model
+   invents a speaker from the instruction and the text in front of it. So a
+   saved voice keeps the take's audio as its reference, and speaking with it
+   conditions on that recording. The Test tab exists to hear the difference.
+=========================================================================== */
+
+const TAB_IDS = ['synth', 'design', 'voices', 'test', 'system'];
+
+function selectTab(name) {
+  document.querySelectorAll('.tab').forEach(button =>
+    button.classList.toggle('active', button.dataset.tab === name));
+  TAB_IDS.forEach(id => $('tab-' + id).classList.toggle('active', id === name));
+  if (name === 'voices') loadVoices();
+  if (name === 'test') loadTestVoices($('tVoice').value || null);
+  if (name === 'system') { loadSystem(); loadHotkeys(); }
+  // Polling only while the tab is visible: the status call reads the clipboard,
+  // and doing that in the background would be both wasteful and rude.
+  clearInterval(systemPoll);
+  systemPoll = name === 'system' ? setInterval(refreshSystemStatus, 2000) : null;
+}
+document.querySelectorAll('.tab').forEach(button =>
+  button.addEventListener('click', () => selectTab(button.dataset.tab)));
+
+/* --- small helpers ------------------------------------------------------ */
+async function api(path, options) {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try { detail = (await response.json()).detail || detail; } catch (_) {}
+    throw new Error(detail);
+  }
+  return response;
+}
+const postJson = (path, body, signal) => api(path, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body), signal
+});
+const patchJson = (path, body) => api(path, {
+  method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+});
+
+const esc = value => String(value ?? '').replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const setMsg = (id, text, bad) => {
+  $(id).textContent = text || '';
+  $(id).className = 'msg' + (bad ? ' bad' : '');
+};
+const shown = value => value === null || value === undefined || value === '' ? '–' : value;
+
+/* --- streaming playback, shared by the design and test tabs --------------- */
+
+/* Every player currently making sound, so Stop can silence all of them. */
+const livePlayers = new Set();
+function stopLivePlayers() {
+  for (const player of livePlayers) player.stop();
+  livePlayers.clear();
+}
+
+/* Read an SSE response, handing each event to `handle`. */
+async function readEvents(response, handle) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split('\n\n');   // SSE frames end with a blank line
+    buffer = frames.pop();
+    for (const frame of frames) {
+      let name = null, payload = '';
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event: ')) name = line.slice(7);
+        else if (line.startsWith('data: ')) payload += line.slice(6);
+      }
+      if (name && payload) handle(name, JSON.parse(payload));
+    }
+  }
+}
+
+/* Generate once, play it as it arrives, and keep the finished audio.
+ *
+ * Returns { blob, seconds, events } -- the blob being the same audio assembled
+ * into a WAV, so a card can offer a player and a download without asking the
+ * model for a second, different take.
+ *
+ * Resolves only after playback has drained, which is what stops one take from
+ * talking over the next.
+ */
+async function streamGeneration({ send, live, onEvent, prebuffer = 0.3 }) {
+  // Built before the fetch, inside the click's user-activation window;
+  // a context created later starts suspended.
+  const player = live ? new StreamPlayer(24000, prebuffer) : null;
+  if (player) {
+    await player.start();
+    livePlayers.add(player);
+  }
+
+  const blocks = [];
+  let totalSamples = 0, sampleRate = 24000, ended = null;
+  try {
+    const response = await send();
+    if (!response.ok) throw await failure(response);
+    await readEvents(response, (name, data) => {
+      if (name === 'start') sampleRate = data.sample_rate || sampleRate;
+      else if (name === 'audio') {
+        const pcm = b64ToInt16(data.pcm);
+        blocks.push(pcm);
+        totalSamples += pcm.length;
+        if (player) player.push(int16ToFloat32(pcm));
+      } else if (name === 'error') throw new Error(data.message);
+      else if (name === 'end') ended = data;
+      if (onEvent) onEvent(name, data);
+    });
+    if (player) {
+      player.finish();
+      await player.drained();
+    }
+  } finally {
+    if (player) { player.stop(); livePlayers.delete(player); }
+  }
+
+  return {
+    blob: wavBlob(blocks, totalSamples, sampleRate),
+    seconds: ended ? ended.audio_seconds : totalSamples / sampleRate,
+    rtf: ended ? ended.rtf : null
+  };
+}
+
+/* One node plays at a time, in the order it was queued. Used for replaying
+   finished takes from their cards. */
+class PlayQueue {
+  constructor() { this.items = []; this.current = null; }
+  add(node) { this.items.push(node); if (!this.current) this.next(); }
+  playAll(nodes) { this.items = [...nodes]; if (!this.current) this.next(); }
+  next() {
+    const node = this.items.shift();
+    if (!node) { this.current = null; return; }
+    this.current = node;
+    node.classList.add('playing');
+    const player = node.querySelector('audio');
+    if (!player) { this.done(node); return; }
+    player.currentTime = 0;
+    player.onended = () => this.done(node);
+    player.play().catch(() => this.done(node));
+  }
+  done(node) {
+    node.classList.remove('playing');
+    if (this.current === node) { this.current = null; this.next(); }
+  }
+  stop() {
+    if (this.current) {
+      const player = this.current.querySelector('audio');
+      if (player) player.pause();
+      this.current.classList.remove('playing');
+    }
+    this.items = []; this.current = null;
+  }
+}
+
+/* --- capabilities and metadata codes, fetched once ---------------------- */
+let META = null;
+async function ensureMeta() {
+  if (META) return META;
+  const [caps, options] = await Promise.all([
+    fetch('/v1/capabilities').then(response => response.json()),
+    fetch('/v1/voice-metadata/options').then(response => response.json())
+  ]);
+  META = { caps, options };
+  if (!$('dText').value.trim()) $('dText').value = caps.voices.default_preview_script;
+  $('dCount').max = caps.voices.preview_count_max;
+  return META;
+}
+ensureMeta().catch(() => {});
+
+function codeOptions(codes, selected, blank = '—') {
+  return `<option value="">${blank}</option>` + codes.map(code =>
+    `<option value="${code}"${code === selected ? ' selected' : ''}>${code.replace(/_/g, ' ')}</option>`
+  ).join('');
+}
+
+/* The descriptive fields shared by the save form and the library editor. */
+function metadataForm(prefix, voice = {}) {
+  const options = META ? META.options : { gender_codes: [], age_codes: [], tone_codes: [], accent_codes: [] };
+  const tone = voice.tone || [];
+  return `
+    <div class="row">
+      <div><label>Name</label><input type="text" data-f="name" value="${esc(voice.name || '')}"></div>
+      <div><label>Description</label><input type="text" data-f="description" value="${esc(voice.description || '')}"></div>
+    </div>
+    <div class="row">
+      <div><label>Gender</label><select data-f="gender">${codeOptions(options.gender_codes, voice.gender)}</select></div>
+      <div><label>Age</label><select data-f="age">${codeOptions(options.age_codes, voice.age)}</select></div>
+      <div><label>Accent</label><select data-f="accent">${codeOptions(options.accent_codes, voice.accent)}</select></div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Tone <span class="hint">— up to ${options.tone_max_items || 3}</span></label>
+        <select multiple size="4" data-f="tone">${(options.tone_codes || []).map(code =>
+          `<option value="${code}"${tone.includes(code) ? ' selected' : ''}>${code}</option>`).join('')}</select>
+      </div>
+      <div>
+        <label>Tags <span class="hint">— comma separated</span></label>
+        <input type="text" data-f="tags" value="${esc((voice.tags || []).join(', '))}">
+        <label style="margin-top:12px">Language label <span class="hint">— metadata only</span></label>
+        <input type="text" data-f="language_code" value="${esc(voice.language_code || '')}" placeholder="en">
+      </div>
+    </div>
+    <div class="row">
+      <div><label>Notes</label><input type="text" data-f="notes" value="${esc(voice.notes || '')}"></div>
+    </div>`;
+}
+
+function readMetadataForm(root) {
+  const payload = {};
+  root.querySelectorAll('[data-f]').forEach(field => {
+    const key = field.dataset.f;
+    if (key === 'tone') payload.tone = [...field.selectedOptions].map(option => option.value);
+    else if (key === 'tags') payload.tags = field.value.split(',').map(t => t.trim()).filter(Boolean);
+    else payload[key] = field.value.trim();
+  });
+  return payload;
+}
+
+/* =========================================================================
+   Design tab
+========================================================================= */
+let designSource = 'design';
+let designTakes = [];
+let designAborter = null;
+const designQueue = new PlayQueue();
+
+$('dSource').addEventListener('click', event => {
+  const button = event.target.closest('button[data-source]');
+  if (!button) return;
+  designSource = button.dataset.source;
+  [...$('dSource').children].forEach(child => child.classList.toggle('on', child === button));
+  $('dDesignFields').style.display = designSource === 'design' ? 'block' : 'none';
+  $('dCloneFields').style.display = designSource === 'clone' ? 'block' : 'none';
+});
+
+function designCommonFields() {
+  const fields = {
+    text: $('dText').value.trim(),
+    cfg_scale: $('dCfg').value,
+    temperature: $('dTemperature').value,
+    top_k: $('dTopK').value,
+    top_p: $('dTopP').value,
+    repetition_penalty: $('dRepPen').value,
+    max_words: $('dMaxWords').value
+  };
+  if (designSource === 'design') {
+    fields.voice_description = $('dInstruction').value.trim();
+  } else {
+    fields.ref_text = $('dRefText').value.trim();
+    fields.ref_audio_path = $('dRefPath').value.trim();
+    fields.instruction = $('dCloneInstruction').value.trim();
+  }
+  const clean = {};
+  for (const [key, value] of Object.entries(fields)) if (value !== '') clean[key] = value;
+  return clean;
+}
+
+function sendTake(fields, seed) {
+  const endpoint = designSource === 'design'
+    ? '/v1/voice-previews/design' : '/v1/voice-previews/clone';
+  const body = { ...fields, preview_count: 1, seed, format: 'sse' };
+  const file = designSource === 'clone' ? $('dRefAudio').files[0] : null;
+  if (file) {                                   // uploads require multipart
+    const form = new FormData();
+    for (const [key, value] of Object.entries(body)) form.append(key, value);
+    form.append('ref_audio', file);
+    return fetch(endpoint, { method: 'POST', body: form, signal: designAborter.signal });
+  }
+  return fetch(endpoint, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body), signal: designAborter.signal
+  });
+}
+
+// Saving the recording itself, rather than one of the takes it produced. The
+// takes were only ever an audition: a cloned voice conditions on the recording
+// every time it speaks, so nothing is lost by never generating one.
+$('dRecSave').addEventListener('click', async () => {
+  const name = $('dRecName').value.trim();
+  const file = $('dRefAudio').files[0];
+  const path = $('dRefPath').value.trim();
+  const text = $('dRefText').value.trim();
+
+  if (!name) { setMsg('dRecMsg', 'Give the voice a name.', true); return; }
+  if (!file && !path) {
+    setMsg('dRecMsg', 'Choose a recording to clone, or give a path to one.', true); return;
+  }
+  if (!text) {
+    setMsg('dRecMsg', 'The exact transcript of the recording is required.', true); return;
+  }
+
+  const body = {
+    voice_name: name,
+    ref_text: text,
+    instruction: $('dCloneInstruction').value.trim(),
+    description: $('dRecDescription').value.trim(),
+    cfg_scale: $('dCfg').value,
+    temperature: $('dTemperature').value,
+    top_k: $('dTopK').value,
+    top_p: $('dTopP').value,
+    repetition_penalty: $('dRepPen').value,
+    max_words: $('dMaxWords').value
+  };
+  if (!file) body.ref_audio_path = path;
+  for (const key of Object.keys(body)) if (body[key] === '') delete body[key];
+
+  $('dRecSave').disabled = true;
+  setMsg('dRecMsg', 'Saving…');
+  try {
+    // An upload has to go as multipart; a path can go as JSON.
+    let response;
+    if (file) {
+      const form = new FormData();
+      for (const [key, value] of Object.entries(body)) form.append(key, value);
+      form.append('ref_audio', file);
+      response = await api('/v1/voices/from-recording', { method: 'POST', body: form });
+    } else {
+      response = await postJson('/v1/voices/from-recording', body);
+    }
+    const voice = await response.json();
+    setMsg('dRecMsg',
+      `Saved “${voice.name}” — ${voice.reference.duration_seconds.toFixed(1)}s reference. `
+      + 'It is on the Voice library tab.');
+    $('dRecName').value = '';
+    if (typeof loadVoices === 'function') loadVoices().catch(() => {});
+  } catch (error) {
+    setMsg('dRecMsg', error.message, true);
+  } finally {
+    $('dRecSave').disabled = false;
+  }
+});
+
+$('dGo').addEventListener('click', async () => {
+  await ensureMeta().catch(() => {});
+  const count = Math.max(1, Math.min(20, Math.round(+$('dCount').value || 1)));
+  const fields = designCommonFields();
+
+  if (!fields.text) { setMsg('dMsg', 'Write a preview script first.', true); return; }
+  if (designSource === 'design' && !fields.voice_description) {
+    setMsg('dMsg', 'Describe the voice you want.', true); return;
+  }
+  if (designSource === 'clone') {
+    if (!$('dRefAudio').files[0] && !fields.ref_audio_path) {
+      setMsg('dMsg', 'Choose a recording to clone, or give a path to one.', true); return;
+    }
+    if (!fields.ref_text) {
+      setMsg('dMsg', 'The exact transcript of the recording is required.', true); return;
+    }
+  }
+
+  const baseSeed = $('dSeed').value === '' ? 42 : Math.round(+$('dSeed').value);
+  designAborter = new AbortController();
+  $('dGo').disabled = true; $('dStop').disabled = false;
+  $('dResultsCard').style.display = 'block';
+
+  const started = performance.now();
+  const live = $('dAutoplay').checked;
+  try {
+    for (let index = 0; index < count; index++) {
+      const seed = baseSeed + index;
+      const position = designTakes.length + 1;
+      setMsg('dMsg', live
+        ? `Take ${index + 1} of ${count} — generating and playing (seed ${seed})…`
+        : `Generating take ${index + 1} of ${count} (seed ${seed})…`);
+
+      // Each take resolves only once its playback has drained, so the next one
+      // never starts talking over it.
+      await streamTake(fields, seed, position, live);
+    }
+    const elapsed = (performance.now() - started) / 1000;
+    setMsg('dMsg', `${count} take(s) in ${elapsed.toFixed(1)}s. Pick one and save it as a voice.`);
+  } catch (error) {
+    if (error.name === 'AbortError') setMsg('dMsg', 'Stopped.');
+    else setMsg('dMsg', error.message, true);
+  } finally {
+    $('dGo').disabled = false; $('dStop').disabled = true; designAborter = null;
+  }
+});
+
+/* Generate one take, playing it live and keeping the finished file. */
+async function streamTake(fields, seed, position, live) {
+  const node = document.createElement('div');
+  node.className = 'take playing';
+  node.innerHTML = `
+    <div class="take-head">
+      <div class="take-title">Take ${position}
+        <span class="pill">seed ${seed}</span>
+        <span class="pill" data-role="state">${live ? 'generating · playing live' : 'generating'}</span>
+      </div>
+    </div>
+    <div class="bar"><i data-role="bar"></i></div>
+    <div class="kv" data-role="live">
+      <span>audio <b data-role="secs">0.0s</b></span>
+      <span>realtime <b data-role="rtf">–</b></span>
+      <span>sentence <b data-role="chunk">–</b></span>
+    </div>`;
+  $('dTakes').appendChild(node);
+  node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+  const set = (role, value) => {
+    const target = node.querySelector(`[data-role=${role}]`);
+    if (target) target.textContent = value;
+  };
+  let preview = null, chunksTotal = 1;
+
+  try {
+    const result = await streamGeneration({
+      send: () => sendTake(fields, seed),
+      live,
+      prebuffer: 0.3,
+      onEvent: (name, data) => {
+        if (name === 'start') chunksTotal = data.chunks || 1;
+        else if (name === 'audio') {
+          set('secs', `${data.audio_seconds.toFixed(1)}s`);
+          set('rtf', `${data.rtf.toFixed(2)}×`);
+          const bar = node.querySelector('[data-role=bar]');
+          if (bar) bar.style.width = `${Math.min(100, (data.chunk + 1) / chunksTotal * 100)}%`;
+        } else if (name === 'boundary') {
+          set('chunk', `${data.chunk + 1}/${data.chunks_total}`);
+        } else if (name === 'preview') {
+          preview = data;
+        }
+      }
+    });
+    if (!preview) throw new Error('The server did not return a saveable take.');
+    finishTake(node, preview, result);
+  } catch (error) {
+    node.classList.remove('playing');
+    set('state', 'failed');
+    throw error;
+  }
+}
+
+$('dStop').addEventListener('click', () => {
+  if (designAborter) designAborter.abort();
+  designQueue.stop();
+  stopLivePlayers();
+});
+
+$('dPlayAll').addEventListener('click', () => designQueue.playAll(designTakes.map(take => take.node)));
+
+$('dClear').addEventListener('click', () => {
+  designQueue.stop();
+  stopLivePlayers();
+  designTakes.forEach(take => URL.revokeObjectURL(take.url));
+  designTakes = [];
+  $('dTakes').innerHTML = '';
+  $('dResultsCard').style.display = 'none';
+  setMsg('dMsg', '');
+});
+
+function finishTake(node, preview, result) {
+  const index = designTakes.length;
+  const url = URL.createObjectURL(result.blob);
+  const generation = preview.generation || {};
+  const seconds = result.seconds || preview.duration_seconds || 0;
+  const tooShort = seconds < (META?.options?.reference_audio?.min_seconds ?? 10);
+
+  node.classList.remove('playing');
+  node.innerHTML = `
+    <div class="take-head">
+      <div class="take-title">Take ${index + 1}
+        <span class="pill">seed ${esc(generation.seed)}</span>
+        <span class="pill">${seconds.toFixed(1)}s</span>
+        <span class="pill">${esc(preview.origin)}</span>
+        ${result.rtf ? `<span class="pill">${result.rtf.toFixed(2)}× realtime</span>` : ''}
+        ${tooShort ? '<span class="pill warnish">short for cloning</span>' : ''}
+      </div>
+      <div class="actions">
+        <button type="button" class="small ghost" data-act="play">Replay</button>
+        <button type="button" class="small" data-act="save">Save as voice</button>
+      </div>
+    </div>
+    <audio controls preload="auto" src="${url}"></audio>
+    <div class="meta">
+      <a class="dl" href="${url}" download="take-${index + 1}-seed-${esc(generation.seed)}.wav">download .wav</a>
+    </div>
+    <div class="kv">
+      <span>mode <b>${esc(generation.mode)}</b></span>
+      <span>cfg <b>${esc(shown(generation.cfg_scale))}</b></span>
+      <span>temperature <b>${esc(shown(generation.temperature ?? 'default'))}</b></span>
+      <span>top-k <b>${esc(shown(generation.top_k ?? 'default'))}</b></span>
+      <span>top-p <b>${esc(shown(generation.top_p ?? 'default'))}</b></span>
+      <span>rep. penalty <b>${esc(shown(generation.repetition_penalty ?? 'default'))}</b></span>
+    </div>
+    <div class="saveform">
+      ${metadataForm('save')}
+      <div class="actions" style="margin-top:12px">
+        <button type="button" class="small" data-act="confirm">Save voice</button>
+        <button type="button" class="small ghost" data-act="cancel" style="margin-left:0">Cancel</button>
+        <span class="hint" data-role="savemsg"></span>
+      </div>
+    </div>`;
+
+  const take = { preview, url, node, index };
+  designTakes.push(take);
+
+  const form = node.querySelector('.saveform');
+  node.querySelector('[data-act=play]').addEventListener('click', () => designQueue.playAll([node]));
+  node.querySelector('[data-act=save]').addEventListener('click', () => {
+    form.classList.toggle('open');
+    const nameField = form.querySelector('[data-f=name]');
+    if (!nameField.value) nameField.value = `${$('dInstruction').value.split(/[,.]/)[0] || 'Voice'} ${index + 1}`.trim();
+    nameField.focus();
+  });
+  node.querySelector('[data-act=cancel]').addEventListener('click', () => form.classList.remove('open'));
+  node.querySelector('[data-act=confirm]').addEventListener('click', async () => {
+    const payload = readMetadataForm(form);
+    const status = form.querySelector('[data-role=savemsg]');
+    if (!payload.name) { status.textContent = 'A name is required.'; return; }
+    status.textContent = 'Saving…';
+    try {
+      const response = await postJson(
+        `/v1/voice-previews/${preview.generated_voice_id}/save`,
+        { voice_name: payload.name, voice_description: payload.description, ...payload }
+      );
+      const voice = await response.json();
+      status.textContent = `Saved as ${voice.voice_id}`;
+      node.classList.add('saved');
+      node.querySelector('[data-act=save]').disabled = true;
+      form.classList.remove('open');
+      loadVoices().catch(() => {});
+      loadTestVoices(voice.voice_id).catch(() => {});
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+  // Not queued for playback: it was already played live while it generated.
+}
+
+/* =========================================================================
+   Voice library
+========================================================================= */
+async function loadVoices() {
+  await ensureMeta().catch(() => {});
+  const query = new URLSearchParams();
+  if ($('vSearch').value.trim()) query.set('search', $('vSearch').value.trim());
+  if ($('vOrigin').value) query.set('origin', $('vOrigin').value);
+  if ($('vFavs').checked) query.set('favorites_only', 'true');
+  query.set('sort', $('vSort').value);
+  query.set('sort_direction', $('vSort').value === 'name' ? 'asc' : 'desc');
+
+  try {
+    const data = await (await api('/v1/voices?' + query)).json();
+    renderVoices(data);
+    setMsg('vMsg', `${data.total} voice(s).`);
+  } catch (error) {
+    setMsg('vMsg', error.message, true);
+  }
+}
+['vSearch', 'vOrigin', 'vSort', 'vFavs'].forEach(id =>
+  $(id).addEventListener(id === 'vSearch' ? 'input' : 'change', () => loadVoices()));
+
+function renderVoices(data) {
+  const list = $('vList');
+  list.innerHTML = '';
+  if (!data.voices.length) {
+    list.innerHTML = '<div class="card"><div class="empty">No voices yet. '
+      + 'Design one on the “Design a voice” tab and save the take you like.</div></div>';
+    return;
+  }
+
+  for (const voice of data.voices) {
+    const generation = voice.generation || {};
+    const reference = voice.reference || {};
+    const short = (reference.duration_seconds || 0) < (META?.options?.reference_audio?.min_seconds ?? 10);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="take-head">
+        <div class="take-title">${esc(voice.name)}
+          <span class="pill${voice.is_favorited ? ' on' : ''}">${voice.is_favorited ? '★ favourite' : voice.origin}</span>
+          ${voice.is_favorited ? `<span class="pill">${esc(voice.origin)}</span>` : ''}
+          ${short ? '<span class="pill warnish">short reference</span>' : ''}
+          ${(voice.references || []).length > 1
+            ? `<span class="pill on">${voice.references.length} tones</span>` : ''}
+        </div>
+        <div class="actions">
+          <button type="button" class="link" data-act="test">Test</button>
+          <button type="button" class="link" data-act="fav">${voice.is_favorited ? 'Unfavourite' : 'Favourite'}</button>
+          <button type="button" class="link" data-act="edit">Edit</button>
+          <button type="button" class="link danger" data-act="delete">Delete</button>
+        </div>
+      </div>
+      ${voice.description ? `<div class="hint" style="font-size:13px;margin-top:4px">${esc(voice.description)}</div>` : ''}
+      <div class="swatch">
+        <span class="hint" style="font-size:12px">Sample</span>
+        <audio controls preload="none" src="${voice.preview_url}"></audio>
+      </div>
+      <div class="kv">
+        <span>id <b>${esc(voice.voice_id)}</b></span>
+        <span>seed <b>${esc(shown(generation.seed))}</b></span>
+        <span>mode <b>${esc(shown(generation.mode))}</b></span>
+        <span>cfg <b>${esc(shown(generation.cfg_scale))}</b></span>
+        <span>temperature <b>${esc(shown(generation.temperature ?? 'default'))}</b></span>
+        <span>top-k <b>${esc(shown(generation.top_k ?? 'default'))}</b></span>
+        <span>top-p <b>${esc(shown(generation.top_p ?? 'default'))}</b></span>
+        <span>rep. penalty <b>${esc(shown(generation.repetition_penalty ?? 'default'))}</b></span>
+        <span>reference <b>${(reference.duration_seconds || 0).toFixed(1)}s ${esc(reference.source || '')}</b></span>
+        <span>gender <b>${esc(shown(voice.gender))}</b></span>
+        <span>age <b>${esc(shown(voice.age))}</b></span>
+        <span>accent <b>${esc(shown(voice.accent))}</b></span>
+      </div>
+      ${(voice.tags || []).length ? `<div class="actions" style="margin-top:8px">${
+        voice.tags.map(tag => `<span class="pill">${esc(tag)}</span>`).join('')}</div>` : ''}
+      ${(voice.tone || []).length ? `<div class="hint" style="font-size:12px;margin-top:6px">tone: ${
+        voice.tone.map(esc).join(', ')}</div>` : ''}
+      <details>
+        <summary>Instruction and reference transcript</summary>
+        <div class="hint" style="font-size:12.5px;margin-top:10px">
+          <b>Instruction:</b> ${esc(generation.instruction || '—')}<br><br>
+          <b>Reference transcript</b> (the exact words in the reference recording, replayed
+          with it on every anchored request):<br>${esc(reference.text || '—')}
+        </div>
+      </details>
+      ${referencesBlock(voice)}
+      <div class="saveform">${metadataForm('edit', voice)}
+        <div class="actions" style="margin-top:12px">
+          <button type="button" class="small" data-act="apply">Save changes</button>
+          <button type="button" class="small ghost" data-act="cancelEdit" style="margin-left:0">Cancel</button>
+          <span class="hint" data-role="editmsg"></span>
+        </div>
+      </div>`;
+    list.appendChild(card);
+    wireReferences(card, voice);
+
+    const form = card.querySelector('.saveform');
+    card.querySelector('[data-act=test]').addEventListener('click', () => {
+      selectTab('test');
+      loadTestVoices(voice.voice_id);
+    });
+    card.querySelector('[data-act=fav]').addEventListener('click', async () => {
+      try {
+        await api(`/v1/voices/${voice.voice_id}/favorite`,
+          { method: voice.is_favorited ? 'DELETE' : 'PUT' });
+        loadVoices();
+      } catch (error) { setMsg('vMsg', error.message, true); }
+    });
+    card.querySelector('[data-act=edit]').addEventListener('click', () => form.classList.toggle('open'));
+    card.querySelector('[data-act=cancelEdit]').addEventListener('click', () => form.classList.remove('open'));
+    card.querySelector('[data-act=apply]').addEventListener('click', async () => {
+      const status = form.querySelector('[data-role=editmsg]');
+      status.textContent = 'Saving…';
+      try {
+        await patchJson(`/v1/voices/${voice.voice_id}`, readMetadataForm(form));
+        status.textContent = 'Saved.';
+        loadVoices();
+        loadTestVoices($('tVoice').value || null).catch(() => {});
+      } catch (error) { status.textContent = error.message; }
+    });
+    card.querySelector('[data-act=delete]').addEventListener('click', async () => {
+      if (!confirm(`Delete “${voice.name}” and its recordings? This cannot be undone.`)) return;
+      try {
+        await api(`/v1/voices/${voice.voice_id}`, { method: 'DELETE' });
+        loadVoices();
+        loadTestVoices().catch(() => {});
+      } catch (error) { setMsg('vMsg', error.message, true); }
+    });
+  }
+}
+
+/* =========================================================================
+   Test a voice
+========================================================================= */
+let testVoices = [];
+let testMethod = 'anchor';
+let testAborter = null;
+const testQueue = new PlayQueue();
+
+const METHOD_NOTES = {
+  anchor: 'Conditions every request on the voice’s stored recording and its exact '
+        + 'transcript (clone, or edit when the voice carries an instruction). This is what '
+        + 'holds the speaker steady on text it has never seen.',
+  params: 'Replays the saved seed, instruction and sampling settings with no reference '
+        + 'recording. Reproducible for identical text — but expect the voice to drift once '
+        + 'the words change, because the model re-invents a speaker each time.'
+};
+$('tMethodNote').textContent = METHOD_NOTES.anchor;
+
+$('tMethod').addEventListener('click', event => {
+  const button = event.target.closest('button[data-method]');
+  if (!button) return;
+  testMethod = button.dataset.method;
+  [...$('tMethod').children].forEach(child => child.classList.toggle('on', child === button));
+  $('tMethodNote').textContent = METHOD_NOTES[testMethod];
+});
+
+async function loadTestVoices(selectId) {
+  try {
+    const data = await (await api('/v1/voices?page_size=200')).json();
+    testVoices = data.voices;
+    const previous = selectId || $('tVoice').value;
+    $('tVoice').innerHTML = testVoices.length
+      ? testVoices.map(voice =>
+          `<option value="${voice.voice_id}">${esc(voice.name)} — ${esc(voice.origin)}</option>`).join('')
+      : '<option value="">No saved voices yet</option>';
+    if (previous && testVoices.some(voice => voice.voice_id === previous)) $('tVoice').value = previous;
+    renderTestProfile();
+  } catch (error) {
+    setMsg('tMsg', error.message, true);
+  }
+}
+
+function currentTestVoice() {
+  return testVoices.find(voice => voice.voice_id === $('tVoice').value) || null;
+}
+
+function renderTestProfile() {
+  const voice = currentTestVoice();
+  if (!voice) { $('tProfile').style.display = 'none'; return; }
+  const generation = voice.generation || {};
+  const reference = voice.reference || {};
+  $('tProfile').style.display = 'block';
+  $('tParams').innerHTML = `
+    <span>id <b>${esc(voice.voice_id)}</b></span>
+    <span>origin <b>${esc(voice.origin)}</b></span>
+    <span>seed <b>${esc(shown(generation.seed))}</b></span>
+    <span>mode <b>${esc(shown(generation.mode))}</b></span>
+    <span>cfg <b>${esc(shown(generation.cfg_scale))}</b></span>
+    <span>temperature <b>${esc(shown(generation.temperature ?? 'default'))}</b></span>
+    <span>top-k <b>${esc(shown(generation.top_k ?? 'default'))}</b></span>
+    <span>top-p <b>${esc(shown(generation.top_p ?? 'default'))}</b></span>
+    <span>rep. penalty <b>${esc(shown(generation.repetition_penalty ?? 'default'))}</b></span>
+    <span>reference <b>${(reference.duration_seconds || 0).toFixed(1)}s</b></span>`;
+  $('tSample').src = voice.preview_url;
+  $('tSeed').placeholder = generation.seed ?? 'saved seed';
+  $('tRefText').innerHTML = `<b>Reference transcript</b> (loaded automatically with the recording): `
+    + esc(reference.text || '—');
+}
+$('tVoice').addEventListener('change', renderTestProfile);
+
+$('tGo').addEventListener('click', async () => {
+  const voice = currentTestVoice();
+  if (!voice) { setMsg('tMsg', 'Save a voice first.', true); return; }
+  const lines = $('tLines').value.split('\n').map(line => line.trim()).filter(Boolean);
+  if (!lines.length) { setMsg('tMsg', 'Add at least one line to speak.', true); return; }
+
+  const savedSeed = (voice.generation || {}).seed ?? 42;
+  const seedOverride = $('tSeed').value === '' ? null : Math.round(+$('tSeed').value);
+  testAborter = new AbortController();
+  $('tGo').disabled = true; $('tStop').disabled = false;
+  $('tResults').innerHTML = '';
+  $('tResultsCard').style.display = 'block';
+
+  const live = $('tAutoplay').checked;
+  try {
+    for (const [index, line] of lines.entries()) {
+      setMsg('tMsg', live
+        ? `Line ${index + 1} of ${lines.length} — generating and playing…`
+        : `Speaking line ${index + 1} of ${lines.length}…`);
+
+      const body = { text: line, voice_mode: testMethod, format: 'sse' };
+      if ($('tVarySeed').checked) body.seed = (seedOverride ?? savedSeed) + index;
+      else if (seedOverride !== null) body.seed = seedOverride;
+      if ($('tPrepare').checked) body.prepare = true;
+
+      // Resolves only once this line has finished playing, so lines never
+      // overlap and each can be judged against the sample on its own.
+      await streamTestLine(voice, line, index, body, live);
+    }
+    setMsg('tMsg', `${lines.length} line(s) done. Every one should sound like the sample above.`);
+  } catch (error) {
+    if (error.name === 'AbortError') setMsg('tMsg', 'Stopped.');
+    else setMsg('tMsg', error.message, true);
+  } finally {
+    $('tGo').disabled = false; $('tStop').disabled = true; testAborter = null;
+  }
+});
+
+$('tStop').addEventListener('click', () => {
+  if (testAborter) testAborter.abort();
+  testQueue.stop();
+  stopLivePlayers();
+});
+
+async function streamTestLine(voice, line, index, body, live) {
+  const node = document.createElement('div');
+  node.className = 'take playing';
+  node.innerHTML = `
+    <div class="take-head">
+      <div class="take-title">Line ${index + 1}
+        <span class="pill" data-role="state">${live ? 'generating · playing live' : 'generating'}</span>
+      </div>
+    </div>
+    <div class="hint" style="font-size:13px;margin:6px 0 4px">${esc(line)}</div>
+    <div class="bar"><i data-role="bar"></i></div>`;
+  $('tResults').appendChild(node);
+  node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+  let meta = null, chunksTotal = 1, prepError = null;
+  try {
+    const result = await streamGeneration({
+      send: () => fetch(`/v1/text-to-speech/${voice.voice_id}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body), signal: testAborter.signal
+      }),
+      live,
+      onEvent: (name, data) => {
+        if (name === 'start') {
+          meta = data;
+          chunksTotal = data.chunks || 1;
+          prepError = data.prep_error;
+        } else if (name === 'audio') {
+          const bar = node.querySelector('[data-role=bar]');
+          if (bar) bar.style.width = `${Math.min(100, (data.chunk + 1) / chunksTotal * 100)}%`;
+        }
+      }
+    });
+
+    const url = URL.createObjectURL(result.blob);
+    node.classList.remove('playing');
+    node.innerHTML = `
+      <div class="take-head">
+        <div class="take-title">Line ${index + 1}
+          <span class="pill">${esc(meta?.mode)}</span>
+          <span class="pill">seed ${esc(body.seed ?? (voice.generation || {}).seed ?? 42)}</span>
+          <span class="pill">cfg ${esc(shown(meta?.cfg_scale))}</span>
+          <span class="pill">${esc(chunksTotal)} chunk(s)</span>
+          <span class="pill">${result.seconds.toFixed(1)}s</span>
+          ${result.rtf ? `<span class="pill">${result.rtf.toFixed(2)}× realtime</span>` : ''}
+        </div>
+        <div class="actions">
+          <button type="button" class="small ghost" data-act="replay">Replay</button>
+        </div>
+      </div>
+      <div class="hint" style="font-size:13px;margin:6px 0 4px">${esc(line)}</div>
+      <audio controls preload="auto" src="${url}"></audio>
+      <div class="meta"><a class="dl" href="${url}" download="line-${index + 1}.wav">download .wav</a></div>
+      ${prepError ? `<div class="note">Text prep was skipped, raw text used: ${esc(prepError)}</div>` : ''}`;
+    node.querySelector('[data-act=replay]').addEventListener(
+      'click', () => testQueue.playAll([node]));
+  } catch (error) {
+    node.classList.remove('playing');
+    const state = node.querySelector('[data-role=state]');
+    if (state) state.textContent = 'failed';
+    throw error;
+  }
+}
+
+/* =========================================================================
+   System speech
+
+   The settings page for the global hotkey. Nothing here plays audio in the
+   browser: the server owns the speaker, because the hotkey fires while some
+   other application is frontmost and there may be no tab open at all.
+========================================================================= */
+let systemConfig = null;
+let systemPoll = null;
+
+// --------------------------------------------------------------------
+// Shortcuts
+//
+// The server owns them, both hotkey hosts read them from it, and this is the
+// editor. Capturing a real keypress rather than asking for typed text is not
+// only friendlier -- it is the only way to be sure the combination the user
+// wants is one the keyboard can actually produce.
+// --------------------------------------------------------------------
+const MODIFIER_KEYS = new Set(['Control', 'Alt', 'Shift', 'Meta']);
+const NAMED_KEY = {
+  ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+  ' ': 'space', Escape: 'escape', Enter: 'enter', Tab: 'tab',
+  Backspace: 'backspace', Delete: 'delete', Home: 'home', End: 'end',
+  PageUp: 'pageup', PageDown: 'pagedown', Insert: 'insert'
+};
+let hotkeyState = { bindings: {}, defaults: {}, actions: [], host: 'python' };
+
+// Pretty-print for the label beside each box. The symbols are the Mac
+// convention and read as gibberish on Windows, so the words are used there.
+function prettyBinding(binding, host) {
+  const mac = host === 'hammerspoon';
+  const parts = String(binding || '').split('+');
+  const key = parts.pop() || '';
+  const symbols = { ctrl: '⌃', alt: '⌥', shift: '⇧', cmd: '⌘' };
+  const words = { ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift', cmd: 'Win' };
+  const names = { left: '←', right: '→', up: '↑', down: '↓' };
+  const shown = names[key] || (key.length === 1 ? key.toUpperCase() : key);
+  return mac
+    ? parts.map(part => symbols[part] || part).join('') + shown
+    : parts.map(part => words[part] || part).concat([shown]).join('+');
+}
+
+function eventToBinding(event) {
+  const modifiers = [];
+  if (event.ctrlKey) modifiers.push('ctrl');
+  if (event.altKey) modifiers.push('alt');
+  if (event.shiftKey) modifiers.push('shift');
+  if (event.metaKey) modifiers.push('cmd');
+  if (MODIFIER_KEYS.has(event.key)) return null;  // still mid-chord
+  let key = NAMED_KEY[event.key];
+  if (!key) {
+    if (/^F\d{1,2}$/.test(event.key)) key = event.key.toLowerCase();
+    // event.code rather than event.key: with Alt held, macOS reports the
+    // accented character the combination would type ("ß" for alt+s), which is
+    // not a key name any hotkey host would recognise.
+    else if (/^Key[A-Z]$/.test(event.code)) key = event.code.slice(3).toLowerCase();
+    else if (/^Digit\d$/.test(event.code)) key = event.code.slice(5);
+    else if (event.key.length === 1) key = event.key.toLowerCase();
+  }
+  if (!key || !modifiers.length) return null;
+  return modifiers.concat([key]).join('+');
+}
+
+function renderHotkeys() {
+  const rows = hotkeyState.actions.map(action => {
+    const value = hotkeyState.bindings[action.action] || action.default;
+    return `<div class="row" style="margin-top:10px;align-items:start">
+      <div>
+        <label for="key-${action.action}">${esc(action.label)}</label>
+        <input type="text" id="key-${action.action}" class="hotkey-input"
+               data-action="${action.action}" value="${esc(value)}"
+               autocomplete="off" spellcheck="false">
+        <div class="hint" id="pretty-${action.action}">${esc(prettyBinding(value, hotkeyState.host))}</div>
+      </div>
+      <div style="grid-column:span 2"><div class="hint" style="font-size:12px;padding-top:22px">${esc(action.help)}</div></div>
+    </div>`;
+  }).join('');
+  $('yKeys').innerHTML = rows;
+
+  document.querySelectorAll('.hotkey-input').forEach(input => {
+    input.addEventListener('keydown', event => {
+      // Tab has to keep moving focus, or the field becomes a trap.
+      if (event.key === 'Tab') return;
+      event.preventDefault();
+      const binding = eventToBinding(event);
+      if (!binding) return;
+      input.value = binding;
+      hotkeyState.bindings[input.dataset.action] = binding;
+      $(`pretty-${input.dataset.action}`).textContent =
+        prettyBinding(binding, hotkeyState.host);
+    });
+    input.addEventListener('change', () => {
+      hotkeyState.bindings[input.dataset.action] = input.value.trim().toLowerCase();
+    });
+    input.addEventListener('focus', () => input.select());
+  });
+
+  const mac = hotkeyState.host === 'hammerspoon';
+  $('yKeysNote').textContent = mac
+    ? 'Saving does not rebind a running Hammerspoon — reload its config after.'
+    : 'Saving does not rebind a running daemon — restart it after.';
+  $('yHostNote').innerHTML = mac
+    ? `Hammerspoon owns the hotkey and the clipboard read; it posts the text here and
+       the rest happens in this process. Run <code>python install_hotkeys.py</code> once
+       from the project directory. After changing the shortcuts above, reload
+       Hammerspoon's config —
+       <code>open -g "hammerspoon://breeze-reload"</code> — to pick them up.`
+    : `A small Python daemon owns the keyboard hook and the clipboard read; it posts the
+       text here and the rest happens in this process. Run
+       <code>python install_hotkeys.py --startup</code> once from the project directory to
+       start it at login, or <code>python -m hotkeys.daemon</code> to run it now. After
+       changing the shortcuts above, restart it.
+       <br><br>If a shortcut does nothing, another program owns it — Windows gives a
+       combination to whoever registered it first, without saying so. Pick another one here.`;
+}
+
+async function loadHotkeys() {
+  try {
+    const data = await (await api('/v1/hotkeys')).json();
+    hotkeyState = {
+      bindings: { ...data.bindings },
+      defaults: { ...data.defaults },
+      actions: data.actions || [],
+      host: data.host || 'python'
+    };
+    renderHotkeys();
+  } catch (error) { setMsg('yKeysMsg', error.message, true); }
+}
+
+async function saveHotkeys() {
+  try {
+    const response = await api('/v1/hotkeys', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bindings: hotkeyState.bindings })
+    });
+    const data = await response.json();
+    hotkeyState.bindings = { ...data.bindings };
+    renderHotkeys();
+    setMsg('yKeysMsg', `Saved. ${data.restart_required}`);
+  } catch (error) { setMsg('yKeysMsg', error.message, true); }
+}
+
+$('yKeysSave').addEventListener('click', saveHotkeys);
+$('yKeysReset').addEventListener('click', () => {
+  hotkeyState.bindings = { ...hotkeyState.defaults };
+  renderHotkeys();
+  setMsg('yKeysMsg', 'Defaults restored here — press Save shortcuts to apply them.');
+});
+
+async function loadSystem() {
+  try {
+    const data = await (await api('/v1/system-speech/config')).json();
+    systemConfig = data.config;
+
+    // The provider is named as well as the model: with four of them
+    // configurable, "gemini-2.5-flash-lite" alone does not say whether that
+    // came from an API key or from a Vertex project.
+    const llm = data.llm || {};
+    $('yLlmState').textContent = llm.available
+      ? `${llm.model} · ${llm.label || llm.provider || ''}`
+      : 'unavailable';
+    $('yLlmState').title = llm.error || (llm.provider ? `provider: ${llm.provider}` : '');
+
+    const devices = data.devices || [];
+    $('yDevice').innerHTML = '<option value="">System default</option>' + devices.map(device =>
+      `<option value="${device.index}">${esc(device.name)}${device.is_default ? ' (default)' : ''}</option>`
+    ).join('');
+    $('yDevice').value = systemConfig.playback.device ?? '';
+
+    const library = await (await api('/v1/voices?page_size=200&sort=name&sort_direction=asc')).json();
+    $('yVoice').innerHTML = library.voices.map(voice =>
+      `<option value="${voice.voice_id}">${esc(voice.name)} — ${voice.references.length} reference(s)</option>`
+    ).join('') || '<option value="">No saved voices yet</option>';
+    if (systemConfig.voice_id) $('yVoice').value = systemConfig.voice_id;
+    describeSystemVoice(library.voices);
+
+    const rotation = systemConfig.rotation || {};
+    $('yRotOverride').checked = !!rotation.override;
+    $('yRotEnabled').checked = rotation.enabled !== false;
+    $('yRotEvery').value = rotation.every_words ?? 1000;
+    $('yRotMode').value = rotation.mode || 'random';
+    $('yRotBoundary').value = rotation.boundary || 'paragraph';
+    $('yRotTags').value = (rotation.tags || []).join(', ');
+
+    $('yPrompt').value = systemConfig.llm.prompt || '';
+    $('yLlmInstruction').value = systemConfig.llm.instruction || '';
+    $('yLlmTemp').value = systemConfig.llm.temperature ?? 0.3;
+
+    $('yPrebuffer').value = systemConfig.playback.prebuffer_ms ?? 400;
+    $('yPauseOnDevice').checked = systemConfig.playback.pause_on_device_change !== false;
+    $('ySkipDebounce').value = (systemConfig.controls || {}).skip_debounce_ms ?? 2000;
+    $('yMaxEntries').value = systemConfig.archive.max_entries ?? 500;
+    $('yArchive').checked = systemConfig.archive.enabled !== false;
+    $('yKeepAudio').checked = systemConfig.archive.keep_audio !== false;
+
+    setMsg('yMsg', '');
+  } catch (error) {
+    setMsg('yMsg', error.message, true);
+  }
+  await Promise.all([refreshSystemStatus(), loadHistory()]);
+}
+
+function describeSystemVoice(voices) {
+  const voice = voices.find(item => item.voice_id === $('yVoice').value);
+  if (!voice) { $('yVoiceNote').textContent = ''; return; }
+  const references = voice.references || [];
+  const labels = references.map(reference =>
+    `${reference.label}${reference.enabled ? '' : ' (off)'}`).join(', ');
+  $('yVoiceNote').textContent = references.length > 1
+    ? `Rotates between ${references.length} references: ${labels}.`
+    : `One reference (${labels || 'base'}). Add a variation on the Voice library tab to give `
+      + 'long reads some variety.';
+}
+
+async function refreshSystemStatus() {
+  try {
+    const status = await (await api('/v1/speak/status')).json();
+    const playback = status.playback || {};
+    $('yPlayState').textContent = status.state === 'paused'
+      ? `paused (${status.pause_reason || 'paused'})`
+      : playback.playing
+        ? `speaking · ${playback.buffered_seconds.toFixed(1)}s buffered`
+        : (status.state === 'error' ? `error: ${status.error}` : status.state || 'idle');
+
+    // Paragraphs are what the skip keys move through, so the position is worth
+    // showing even while the model is still writing the later ones.
+    if (status.paragraphs) {
+      const at = (status.paragraph_target ?? status.paragraph ?? 0) + 1;
+      $('yPara').textContent = status.paragraphs_final
+        ? `${at} of ${status.paragraphs}`
+        : `${at} of ${status.paragraphs}+`;
+      $('yParaNote').textContent = status.state === 'paused'
+        ? 'Paused — a paragraph press picks it up where it stopped.'
+        : (status.paragraph_preview || '').slice(0, 90);
+    } else {
+      $('yPara').textContent = '–';
+      $('yParaNote').textContent = '';
+    }
+    // The engine runs at 24 kHz and almost no output device does, so the rate
+    // pair is worth showing: it is the first thing to check if playback ever
+    // starts crackling again.
+    $('yRate').textContent = playback.device_rate
+      ? `${(playback.sample_rate / 1000).toFixed(0)} → ${(playback.device_rate / 1000).toFixed(1)} kHz`
+        + (playback.underruns ? ` · ${playback.underruns} underruns` : '')
+      : '–';
+    const clipboard = await (await api('/v1/speak/clipboard')).json();
+    $('yClip').textContent = clipboard.chars
+      ? `${clipboard.words} words` : 'empty';
+  } catch (_) { /* the server may be reloading; the next tick retries */ }
+}
+
+async function speakClipboard(useLlm) {
+  setMsg('yMsg', useLlm ? 'Sending to the model…' : 'Speaking…');
+  try {
+    await postJson('/v1/speak', { llm: useLlm, voice_id: $('yVoice').value || undefined });
+    setMsg('yMsg', 'Playing on this machine.');
+  } catch (error) { setMsg('yMsg', error.message, true); }
+  refreshSystemStatus();
+}
+
+async function skipParagraph(delta) {
+  try {
+    const result = await (await postJson('/v1/speak/skip', { delta })).json();
+    setMsg('yMsg', result.action === 'skipped'
+      ? `Paragraph ${(result.paragraph_target ?? 0) + 1}.`
+      : 'Nothing is being read.');
+  } catch (error) { setMsg('yMsg', error.message, true); }
+  refreshSystemStatus();
+}
+
+$('yPrev').addEventListener('click', () => skipParagraph(-1));
+$('yNext').addEventListener('click', () => skipParagraph(1));
+$('ySpeakClip').addEventListener('click', () => speakClipboard(false));
+$('ySpeakClipLlm').addEventListener('click', () => speakClipboard(true));
+$('yStop').addEventListener('click', async () => {
+  try { await postJson('/v1/speak/stop', {}); setMsg('yMsg', 'Stopped.'); }
+  catch (error) { setMsg('yMsg', error.message, true); }
+  refreshSystemStatus();
+});
+$('yRefresh').addEventListener('click', () => { loadSystem(); loadHotkeys(); });
+$('yVoice').addEventListener('change', async () => {
+  const library = await (await api('/v1/voices?page_size=200')).json();
+  describeSystemVoice(library.voices);
+});
+
+function systemPatch() {
+  return {
+    voice_id: $('yVoice').value || null,
+    rotation: {
+      override: $('yRotOverride').checked,
+      enabled: $('yRotEnabled').checked,
+      every_words: Number($('yRotEvery').value) || 1000,
+      mode: $('yRotMode').value,
+      boundary: $('yRotBoundary').value,
+      tags: $('yRotTags').value.split(',').map(tag => tag.trim()).filter(Boolean)
+    },
+    llm: {
+      instruction: $('yLlmInstruction').value.trim(),
+      temperature: Number($('yLlmTemp').value)
+    },
+    playback: {
+      prebuffer_ms: Number($('yPrebuffer').value) || 0,
+      device: $('yDevice').value === '' ? null : Number($('yDevice').value),
+      pause_on_device_change: $('yPauseOnDevice').checked
+    },
+    controls: {
+      skip_debounce_ms: Number($('ySkipDebounce').value) || 0
+    },
+    archive: {
+      enabled: $('yArchive').checked,
+      keep_audio: $('yKeepAudio').checked,
+      max_entries: Number($('yMaxEntries').value) || 500
+    }
+  };
+}
+
+$('ySave').addEventListener('click', async () => {
+  $('ySaveMsg').textContent = 'Saving…';
+  try {
+    await patchJson('/v1/system-speech/config', systemPatch());
+    $('ySaveMsg').textContent = 'Saved.';
+  } catch (error) { $('ySaveMsg').textContent = error.message; }
+});
+
+$('yPromptSave').addEventListener('click', async () => {
+  $('yPromptMsg').textContent = 'Saving…';
+  try {
+    await patchJson('/v1/system-speech/config', { llm: { prompt: $('yPrompt').value } });
+    $('yPromptMsg').textContent = 'Saved.';
+  } catch (error) { $('yPromptMsg').textContent = error.message; }
+});
+
+$('yPromptReset').addEventListener('click', async () => {
+  try {
+    const data = await (await api('/v1/system-speech/prompt/reset', { method: 'POST' })).json();
+    $('yPrompt').value = data.config.llm.prompt;
+    $('yPromptMsg').textContent = 'Restored the default prompt.';
+  } catch (error) { $('yPromptMsg').textContent = error.message; }
+});
+
+async function loadHistory() {
+  const list = $('yHistory');
+  try {
+    const data = await (await api('/v1/system-speech/history?limit=30')).json();
+    if (!data.entries.length) {
+      list.innerHTML = '<div class="empty">Nothing spoken yet.</div>';
+      return;
+    }
+    list.innerHTML = data.entries.map(entry => `
+      <div class="take">
+        <div class="take-head">
+          <div class="take-title">${esc(entry.created_at)}
+            ${entry.llm ? '<span class="pill on">model</span>' : ''}
+            ${entry.voice_name ? `<span class="pill">${esc(entry.voice_name)}</span>` : ''}
+            ${(entry.reference_segments || []).length > 1
+              ? `<span class="pill">${entry.reference_segments.length} tone changes</span>` : ''}
+            ${entry.error ? '<span class="pill warnish">failed</span>' : ''}
+          </div>
+          <div class="hint" style="font-size:12px">${(entry.audio_seconds || 0).toFixed(1)}s
+            in ${(entry.elapsed_seconds || 0).toFixed(1)}s</div>
+        </div>
+        <div class="hint" style="font-size:12.5px;margin-top:6px">${esc(entry.input_preview || '')}</div>
+        ${entry.has_audio ? `<div class="swatch"><audio controls preload="none"
+          src="/v1/system-speech/history/${encodeURI(entry.directory)}/audio"></audio></div>` : ''}
+      </div>`).join('');
+  } catch (error) {
+    list.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+}
+
+$('yHistoryReload').addEventListener('click', () => loadHistory());
+$('yHistoryClear').addEventListener('click', async () => {
+  if (!confirm('Delete every archived utterance, including the audio?')) return;
+  try { await api('/v1/system-speech/history', { method: 'DELETE' }); loadHistory(); }
+  catch (error) { setMsg('yMsg', error.message, true); }
+});
+
+
+/* =========================================================================
+   References: several recordings of one speaker
+
+   A voice starts with one reference. Variations are generated from it in edit
+   mode -- the recording holds the identity, the descriptor moves the delivery
+   -- so every entry is still the same person. A long read rotates between
+   them, which is the whole point of having more than one.
+========================================================================= */
+function referencesBlock(voice) {
+  const references = voice.references || [];
+  const rotation = voice.rotation || {};
+  const minSeconds = META?.options?.reference_audio?.min_seconds ?? 10;
+
+  const rows = references.map(reference => `
+    <div class="take" data-ref="${esc(reference.reference_id)}">
+      <div class="take-head">
+        <div class="take-title">${esc(reference.label || reference.reference_id)}
+          ${reference.is_default ? '<span class="pill on">default</span>' : ''}
+          ${reference.enabled ? '' : '<span class="pill">disabled</span>'}
+          <span class="pill">${esc(reference.source)}</span>
+          ${(reference.duration_seconds || 0) < minSeconds
+            ? '<span class="pill warnish">short</span>' : ''}
+        </div>
+        <div class="actions">
+          ${reference.is_default ? '' :
+            '<button type="button" class="link" data-act="makeDefault">Make default</button>'}
+          <button type="button" class="link" data-act="toggle">${
+            reference.enabled ? 'Disable' : 'Enable'}</button>
+          ${references.length > 1
+            ? '<button type="button" class="link danger" data-act="dropRef">Delete</button>' : ''}
+        </div>
+      </div>
+      <div class="swatch">
+        <audio controls preload="none" src="${reference.audio_url}"></audio>
+        <span class="hint" style="font-size:12px">${(reference.duration_seconds || 0).toFixed(1)}s</span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div><label>Label</label><input type="text" data-field="label"
+          value="${esc(reference.label || '')}"></div>
+        <div><label>Tags</label><input type="text" data-field="tags"
+          value="${esc((reference.tags || []).join(', '))}"
+          placeholder="happy, calm, urgent"></div>
+        <div style="flex:0 0 auto;display:flex;align-items:flex-end">
+          <button type="button" class="small ghost" data-act="saveRef" style="margin-left:0">Save</button>
+        </div>
+      </div>
+      ${reference.instruction ? `<div class="hint" style="font-size:12px;margin-top:8px">
+        direction: ${esc(reference.instruction)}</div>` : ''}
+      <details style="margin-top:6px">
+        <summary>Transcript</summary>
+        <div class="hint" style="font-size:12.5px;margin-top:8px">${esc(reference.text || '—')}</div>
+      </details>
+    </div>`).join('');
+
+  return `
+    <details class="refs">
+      <summary>References and tone rotation (${references.length})</summary>
+
+      <div class="hint" style="font-size:12.5px;margin:10px 0">
+        Every reference is the same speaker under a different direction. On a long read the
+        engine switches between them at paragraph breaks, so two pages do not arrive in one
+        unchanging tone. A reference needs about ${minSeconds}s of speech to clone from.
+      </div>
+
+      ${rows}
+
+      <div class="row" style="margin-top:16px">
+        <div>
+          <label class="check"><input type="checkbox" data-rot="enabled"
+            ${rotation.enabled !== false ? 'checked' : ''}><span>Rotate tone</span></label>
+        </div>
+        <div><label>Switch after</label>
+          <input type="number" data-rot="every_words" min="20" max="100000" step="50"
+            value="${rotation.every_words ?? 1000}">
+          <div class="hint">words</div></div>
+        <div><label>Order</label>
+          <select data-rot="mode">
+            <option value="random"${rotation.mode === 'random' ? ' selected' : ''}>Random</option>
+            <option value="sequence"${rotation.mode === 'sequence' ? ' selected' : ''}>In order</option>
+          </select></div>
+        <div><label>Switch at</label>
+          <select data-rot="boundary">
+            <option value="paragraph"${rotation.boundary === 'paragraph' ? ' selected' : ''}>Paragraph breaks</option>
+            <option value="sentence"${rotation.boundary === 'sentence' ? ' selected' : ''}>Sentence breaks</option>
+          </select></div>
+        <div style="flex:0 0 auto;display:flex;align-items:flex-end">
+          <button type="button" class="small ghost" data-act="saveRotation" style="margin-left:0">Save</button>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">
+        <div class="take-title" style="margin-bottom:6px">Add a variation</div>
+        <div class="hint" style="font-size:12.5px;margin-bottom:10px">
+          Describe how this take should differ — “warmer and slower”, “brighter, smiling”,
+          “grave and deliberate”. The voice's own recording keeps the identity; the
+          description only moves the delivery. Keep the script long enough to clone from.
+        </div>
+        <label>Direction</label>
+        <input type="text" data-var="instruction"
+          placeholder="Noticeably warmer and slower, as if telling a story to one person.">
+        <label style="margin-top:12px">Script to speak</label>
+        <textarea data-var="text" style="min-height:96px"></textarea>
+        <div class="row">
+          <div><label>Takes</label>
+            <input type="number" data-var="count" value="2" min="1" max="6"></div>
+          <div><label>Seed</label>
+            <input type="number" data-var="seed" placeholder="42"></div>
+          <div style="flex:0 0 auto;display:flex;align-items:flex-end">
+            <button type="button" class="small" data-act="makeVariation" style="margin-left:0">
+              Generate takes</button>
+          </div>
+        </div>
+        <div class="msg" data-role="varmsg"></div>
+        <div data-role="varTakes"></div>
+      </div>
+    </details>`;
+}
+
+function wireReferences(card, voice) {
+  const details = card.querySelector('details.refs');
+  if (!details) return;
+
+  const reload = async () => { await loadVoices(); };
+  const fail = (error) => { setMsg('vMsg', error.message, true); };
+
+  details.querySelectorAll('[data-ref]').forEach(row => {
+    const referenceId = row.dataset.ref;
+    const path = `/v1/voices/${voice.voice_id}/references/${referenceId}`;
+    const act = (name) => row.querySelector(`[data-act=${name}]`);
+
+    act('saveRef')?.addEventListener('click', async () => {
+      try {
+        await patchJson(path, {
+          label: row.querySelector('[data-field=label]').value,
+          tags: row.querySelector('[data-field=tags]').value
+            .split(',').map(tag => tag.trim()).filter(Boolean)
+        });
+        setMsg('vMsg', 'Reference updated.');
+        reload();
+      } catch (error) { fail(error); }
+    });
+    act('makeDefault')?.addEventListener('click', async () => {
+      try { await patchJson(path, { is_default: true }); reload(); }
+      catch (error) { fail(error); }
+    });
+    act('toggle')?.addEventListener('click', async () => {
+      const reference = (voice.references || []).find(item => item.reference_id === referenceId);
+      try { await patchJson(path, { enabled: !reference.enabled }); reload(); }
+      catch (error) { fail(error); }
+    });
+    act('dropRef')?.addEventListener('click', async () => {
+      if (!confirm('Delete this reference recording?')) return;
+      try { await api(path, { method: 'DELETE' }); reload(); }
+      catch (error) { fail(error); }
+    });
+  });
+
+  details.querySelector('[data-act=saveRotation]')?.addEventListener('click', async () => {
+    const read = (name) => details.querySelector(`[data-rot=${name}]`);
+    try {
+      await patchJson(`/v1/voices/${voice.voice_id}/rotation`, {
+        enabled: read('enabled').checked,
+        every_words: Number(read('every_words').value) || 1000,
+        mode: read('mode').value,
+        boundary: read('boundary').value
+      });
+      setMsg('vMsg', 'Rotation saved.');
+    } catch (error) { fail(error); }
+  });
+
+  const takes = details.querySelector('[data-role=varTakes]');
+  const status = details.querySelector('[data-role=varmsg]');
+
+  details.querySelector('[data-act=makeVariation]')?.addEventListener('click', async () => {
+    const read = (name) => details.querySelector(`[data-var=${name}]`);
+    const instruction = read('instruction').value.trim();
+    if (!instruction) { status.textContent = 'Describe how this take should differ.'; return; }
+
+    const body = {
+      instruction,
+      preview_count: Number(read('count').value) || 1
+    };
+    if (read('text').value.trim()) body.text = read('text').value.trim();
+    if (read('seed').value) body.seed = Number(read('seed').value);
+
+    status.textContent = 'Generating…';
+    takes.innerHTML = '';
+    try {
+      const data = await (await postJson(
+        `/v1/voices/${voice.voice_id}/variations`, body)).json();
+      status.textContent = (data.warnings || []).join(' ')
+        || `${data.previews.length} take(s). Listen, then keep the one that fits.`;
+      renderVariationTakes(takes, voice, data);
+    } catch (error) { status.textContent = error.message; }
+  });
+}
+
+function renderVariationTakes(container, voice, data) {
+  const minSeconds = META?.options?.reference_audio?.min_seconds ?? 10;
+  container.innerHTML = data.previews.map((preview, index) => `
+    <div class="take" data-gvi="${esc(preview.generated_voice_id)}">
+      <div class="take-head">
+        <div class="take-title">Take ${index + 1}
+          <span class="pill">seed ${esc(preview.generation?.seed)}</span>
+          <span class="pill${preview.duration_seconds < minSeconds ? ' warnish' : ''}">${
+            (preview.duration_seconds || 0).toFixed(1)}s</span>
+        </div>
+      </div>
+      <div class="swatch">
+        <audio controls preload="none" src="${preview.stream_url}"></audio>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>Label</label><input type="text" data-field="label"
+          placeholder="warm"></div>
+        <div><label>Tags</label><input type="text" data-field="tags"
+          placeholder="warm, slow"></div>
+        <div style="flex:0 0 auto;display:flex;align-items:flex-end">
+          <button type="button" class="small" data-act="keep" style="margin-left:0"
+            ${preview.duration_seconds < minSeconds ? 'disabled title="Too short to clone from"' : ''}>
+            Keep as reference</button>
+        </div>
+      </div>
+      <span class="hint" data-role="keepmsg"></span>
+    </div>`).join('');
+
+  container.querySelectorAll('[data-gvi]').forEach(row => {
+    row.querySelector('[data-act=keep]')?.addEventListener('click', async () => {
+      const note = row.querySelector('[data-role=keepmsg]');
+      note.textContent = 'Saving…';
+      try {
+        await postJson(`/v1/voices/${voice.voice_id}/references`, {
+          generated_voice_id: row.dataset.gvi,
+          label: row.querySelector('[data-field=label]').value.trim() || undefined,
+          tags: row.querySelector('[data-field=tags]').value
+            .split(',').map(tag => tag.trim()).filter(Boolean)
+        });
+        note.textContent = 'Added.';
+        loadVoices();
+      } catch (error) { note.textContent = error.message; }
+    });
+  });
+}
+
+// Last, so the helpers it leans on (esc, setMsg, postJson) are all defined.
+refreshAudioUsage();
+setInterval(refreshAudioUsage, 5 * 60 * 1000);
+
+</script>
+</body>
+</html>

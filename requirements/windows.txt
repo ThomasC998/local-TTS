@@ -1,0 +1,14 @@
+# Windows with an NVIDIA GPU. Run: pip install -r requirements/windows.txt
+#
+# IMPORTANT: torch is NOT listed here, and that is deliberate. The CUDA build
+# comes from NVIDIA's own package index, which a plain `pip install torch`
+# does not use -- it installs a CPU-only wheel instead, and the server then
+# refuses to start with "no CUDA device is visible to PyTorch". Install it
+# first, or just run install.ps1, which does this for you:
+#
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+#
+-r common.txt
+
+# The global keyboard hook. This is Windows' Hammerspoon.
+pynput>=1.7
