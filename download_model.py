@@ -26,6 +26,15 @@ import sys
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent
+if str(PROJECT) not in sys.path:
+    sys.path.insert(0, str(PROJECT))
+
+import platform_support  # noqa: E402
+
+# Every setting this script honours -- BREEZE_MODEL, BREEZE_BACKEND,
+# BREEZE_MODEL_REPO, BREEZE_MODEL_REVISION -- is documented as living in .env,
+# so it has to be read before any of them is looked up.
+platform_support.load_env()
 
 # ---------------------------------------------------------------------------
 # What to download, per backend.

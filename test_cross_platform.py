@@ -783,6 +783,54 @@ def test_requirements() -> None:
         )
 
 
+
+def test_entry_points_read_env() -> None:
+    """Anything documented as a .env setting has to be read by whoever uses it.
+
+    ``.env`` is per-machine configuration, and a script that looks up a setting
+    without loading the file first does not fail -- it quietly uses the default
+    and does exactly the wrong thing. That happened once already, to the
+    downloader, and it is invisible on a machine where the default is right.
+    """
+    print("\nentry points and .env")
+    import ast
+
+    # Modules a user runs directly, and which resolve at least one BREEZE_*
+    # setting. Library modules are excluded: they are imported by these, and by
+    # then the file has been read.
+    entry_points = ("breeze_server.py", "download_model.py", "text_prep.py")
+
+    for relative in entry_points:
+        source = (PROJECT / relative).read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=relative)
+        loads_env = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "load_env"
+            for node in ast.walk(tree)
+        )
+        check(loads_env, f"{relative} loads .env before it reads a setting")
+
+    # And every setting .env.example documents is one something actually reads,
+    # so the file cannot drift into promising options that do nothing.
+    documented = set()
+    for raw in (PROJECT / ".env.example").read_text(encoding="utf-8").splitlines():
+        line = raw.strip().lstrip("#").strip()
+        if "=" in line and not line.startswith(" "):
+            name = line.split("=", 1)[0].strip()
+            if name.isupper() and name.replace("_", "").isalnum():
+                documented.add(name)
+    check(bool(documented), ".env.example documents some settings")
+
+    haystack = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in PROJECT.rglob("*.py")
+        if ".venv" not in path.parts and "__pycache__" not in path.parts
+    )
+    unused = sorted(name for name in documented if name not in haystack)
+    check(not unused, f"every documented setting is read somewhere" + (f" (orphans: {unused})" if unused else ""))
+
+
 def main() -> int:
     print("cross-platform checks")
     test_bindings()
@@ -793,6 +841,7 @@ def main() -> int:
     test_no_undefined_names()
     test_checkpoint_formats()
     test_requirements()
+    test_entry_points_read_env()
 
     print()
     if FAILED:
