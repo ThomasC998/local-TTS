@@ -63,9 +63,10 @@ The INT8 checkpoint ships as pickle shards (`pytorch_model-*.bin`) rather than
 safetensors, because transformers cannot currently round-trip a torchao INT8
 checkpoint through safetensors. `torch.load` is called with `weights_only=True`,
 which works because importing torchao registers its tensor classes as safe to
-reconstruct. **torchao is required** for that checkpoint —
-`requirements/windows.txt` installs it, pinned to 0.17.0 because 0.18+ needs
-torch 2.11 and the CUDA wheels installed here are 2.9.
+reconstruct. **torchao is required** for that checkpoint — `requirements.txt`
+installs it everywhere except macOS, pinned to 0.17.0 because 0.18+ needs torch
+2.11 at run time while the CUDA wheels the installer fetches are 2.9. pip cannot
+catch that on its own: torchao declares no dependency on torch at all.
 
 One consequence worth knowing: a pickle shard is materialized whole rather than
 tensor by tensor, so loading briefly needs about 5 GB of host RAM. The BF16

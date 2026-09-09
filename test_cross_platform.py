@@ -665,6 +665,124 @@ def test_checkpoint_formats() -> None:
         )
 
 
+
+def test_requirements() -> None:
+    """One requirements file, and what it resolves to on each machine.
+
+    The markers are the whole reason a single file works, and they are exactly
+    the kind of thing that is wrong in a way nobody notices: a marker that never
+    matches installs nothing and says nothing, and one that always matches tries
+    to put MLX on a PC. So both sides are evaluated here rather than trusted.
+    """
+    print("\nrequirements")
+    try:
+        from packaging.requirements import Requirement
+    except ImportError:
+        check(True, "skipped: packaging is not installed")
+        return
+
+    path = PROJECT / "requirements.txt"
+    check(path.is_file(), "there is one requirements.txt, at the project root")
+    check(
+        not (PROJECT / "requirements").exists(),
+        "...and no per-platform directory beside it",
+    )
+
+    entries = []
+    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("-"):
+            # A -r or --index-url line. The second would silently change where
+            # every package in the file comes from, which is not something to
+            # leave to a review.
+            check(False, f"line {number} is a pip option, not a requirement: {line}")
+            continue
+        try:
+            entries.append(Requirement(line))
+        except Exception as exc:  # noqa: BLE001
+            check(False, f"line {number} does not parse: {line} ({exc})")
+    check(bool(entries), "the file parses as requirements")
+
+    # A complete marker environment for each platform. Every key pip can test
+    # has to be present, or evaluating a marker raises rather than returning
+    # False -- which would look like "this package is skipped here".
+    def machine(**overrides: str) -> dict[str, str]:
+        base = {
+            "implementation_name": "cpython",
+            "implementation_version": "3.12.0",
+            "os_name": "posix",
+            "platform_machine": "arm64",
+            "platform_python_implementation": "CPython",
+            "platform_release": "",
+            "platform_system": "Darwin",
+            "platform_version": "",
+            "python_full_version": "3.12.0",
+            "python_version": "3.12",
+            "sys_platform": "darwin",
+            "extra": "",
+        }
+        base.update(overrides)
+        return base
+
+    machines = {
+        "macos": machine(),
+        "windows": machine(
+            os_name="nt", platform_machine="AMD64", platform_system="Windows",
+            sys_platform="win32",
+        ),
+        "linux": machine(
+            platform_machine="x86_64", platform_system="Linux", sys_platform="linux",
+        ),
+    }
+    selected = {
+        name: {
+            entry.name.lower().replace("_", "-")
+            for entry in entries
+            if entry.marker is None or entry.marker.evaluate(env)
+        }
+        for name, env in machines.items()
+    }
+
+    # What every machine needs, whichever backend it ends up running.
+    shared = {
+        "fastapi", "uvicorn", "python-multipart", "numpy", "soundfile", "soxr",
+        "sounddevice", "transformers", "safetensors", "qwen-tts",
+        "huggingface-hub", "torch", "torchaudio", "pynput", "python-dotenv",
+        "requests", "google-genai", "psutil",
+    }
+    for name, packages in selected.items():
+        missing = shared - packages
+        check(not missing, f"{name} installs everything shared" + (f" (missing {sorted(missing)})" if missing else ""))
+
+    check("mlx" in selected["macos"], "macOS installs MLX")
+    check("mlx" not in selected["windows"], "Windows does not try to install MLX")
+    check("mlx" not in selected["linux"], "nor does Linux, which has no Metal")
+    check("torchao" in selected["windows"], "Windows installs torchao, for the INT8 checkpoint")
+    check("torchao" not in selected["macos"], "macOS does not, since MLX does not use it")
+
+    # Every third-party module the project imports has to be installable from
+    # this file. Names differ from imports often enough that a missing one is a
+    # plausible mistake, so the mapping is written out.
+    distributions = {
+        "dotenv": "python-dotenv", "google": "google-genai", "qwen_tts": "qwen-tts",
+        "huggingface_hub": "huggingface-hub", "starlette": "fastapi",
+    }
+    imports = {
+        "dotenv", "fastapi", "google", "huggingface_hub", "mlx", "numpy", "psutil",
+        "pynput", "qwen_tts", "requests", "safetensors", "sounddevice", "soundfile",
+        "soxr", "starlette", "torch", "torchao", "transformers", "uvicorn",
+    }
+    everywhere = set().union(*selected.values())
+    for module in sorted(imports):
+        distribution = distributions.get(module, module).lower().replace("_", "-")
+        check(
+            distribution in everywhere,
+            f"`import {module}` is covered by {distribution}",
+        )
+
+
 def main() -> int:
     print("cross-platform checks")
     test_bindings()
@@ -674,6 +792,7 @@ def main() -> int:
     test_config_round_trip()
     test_no_undefined_names()
     test_checkpoint_formats()
+    test_requirements()
 
     print()
     if FAILED:

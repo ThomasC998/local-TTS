@@ -151,7 +151,10 @@ Ok "PyTorch sees $($deviceName.Trim())"
 # Everything else
 # ---------------------------------------------------------------------------
 Step "Python packages"
-& $python -m pip install -r (Join-Path $Project "requirements\windows.txt")
+# One requirements file for both platforms. The lines that differ carry an
+# environment marker, so pip skips MLX here and torchao on a Mac. torch is
+# listed in it and is already satisfied by the CUDA wheel installed above.
+& $python -m pip install -r (Join-Path $Project "requirements.txt")
 Ok "Installed"
 
 # Checked again, deliberately. Any package that declares torch as a dependency

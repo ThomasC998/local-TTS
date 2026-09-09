@@ -98,7 +98,9 @@ ok "pip is up to date"
 # Packages
 # ---------------------------------------------------------------------------
 step "Python packages"
-"$PYTHON" -m pip install -r requirements/macos.txt
+# One requirements file for both platforms. The lines that differ carry an
+# environment marker, so pip skips torchao here and MLX on a PC.
+"$PYTHON" -m pip install -r requirements.txt
 ok "Installed"
 
 if "$PYTHON" -c 'import mlx.core' 2>/dev/null; then

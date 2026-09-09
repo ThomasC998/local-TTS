@@ -46,6 +46,14 @@ for your machine, offers to install SoX, copies `.env.example` to `.env`, and
 downloads the speech model (3.5 GB on a Mac, 5.9 GB on Windows). It is safe to
 run again; the model download resumes where it stopped.
 
+There is one `requirements.txt` for both platforms — the four lines that differ
+carry an environment marker, so pip skips MLX on a PC and torchao on a Mac. The
+one thing it cannot express is where PyTorch comes from: on Windows the CUDA
+build lives on NVIDIA's own package index, not PyPI, so `install.ps1` fetches it
+before anything else and checks afterwards that nothing replaced it. Installing
+`requirements.txt` by hand on Windows without doing that first is the usual
+cause of "no CUDA device is visible to PyTorch".
+
 Then:
 
 ```bash
@@ -181,7 +189,7 @@ difference is in a directory named for it.
 | **Which language model, per configuration** | `llm_providers/` |
 | **The clipboard, device watching, autostart** | `platform_support.py`, `audio_out.py` |
 | **The shortcuts, and both hotkey hosts** | `hotkeys/` |
-| Installers | `install.sh`, `install.ps1`, `download_model.py`, `install_hotkeys.py` |
+| Installers | `install.sh`, `install.ps1`, `requirements.txt`, `download_model.py`, `install_hotkeys.py` |
 | Configuration | `.env`, `state/system_speech.json` |
 | Checkpoint | `chkpt-mlx-int8/` or `chkpt-breeze-tts-2-int8/` — not in the repository |
 

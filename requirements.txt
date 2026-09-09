@@ -1,0 +1,77 @@
+# Everything this project needs, on either platform.
+#
+#     pip install -r requirements.txt
+#
+# One file rather than three, because almost every line is shared. The four
+# that are not carry an environment marker, which pip evaluates per machine --
+# so a Mac never sees torchao and a PC never tries to install MLX.
+#
+# Version bounds are lower bounds, not pins: this is an application installed
+# once, and a fully pinned tree goes stale faster than it prevents breakage.
+# Where an exact version genuinely matters, the reason is written beside it.
+#
+# ---------------------------------------------------------------------------
+# WINDOWS: install PyTorch first, or run install.ps1, which does it for you.
+#
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+#
+# PyTorch's CUDA builds are not on PyPI. Installing this file on Windows
+# without doing that first gets a CPU-only wheel -- pulled in transitively by
+# qwen-tts even though torch is listed below -- and the server then refuses to
+# start with "no CUDA device is visible to PyTorch", on a machine that plainly
+# has one. It is the single most common way this install goes wrong.
+# ---------------------------------------------------------------------------
+
+# -- Server -----------------------------------------------------------------
+fastapi>=0.115
+uvicorn>=0.30
+# Not imported by our code: starlette needs it to parse the multipart uploads
+# the voice-cloning endpoints accept.
+python-multipart>=0.0.9
+
+# -- Audio ------------------------------------------------------------------
+# soundfile writes the archive, soxr resamples to the output device's own rate,
+# and sounddevice is the streaming player. audio_out.py explains why all three.
+numpy>=2.0,<3
+soundfile>=0.13
+soxr>=0.5
+sounddevice>=0.5
+
+# -- The speech model -------------------------------------------------------
+# transformers supplies the text tokenizer; qwen-tts is the audio codec, and
+# pins transformers to exactly 4.57.3, so that is what resolves whatever this
+# line says. qwen-tts also needs the native SoX executable, which pip cannot
+# install -- both installers offer it.
+transformers>=4.57.3,<5
+safetensors>=0.8
+qwen-tts==0.1.1
+huggingface_hub>=0.34
+
+# torch runs the audio codec on both platforms, and the whole model on CUDA.
+# On Windows this is already satisfied by the CUDA wheel; see the note above.
+torch>=2.6
+torchaudio>=2.6
+
+# The Apple-Silicon runtime. No build exists for anything else, and the marker
+# is what keeps `pip install -r requirements.txt` working on a PC.
+mlx>=0.32,<0.33; sys_platform == "darwin" and platform_machine == "arm64"
+
+# Reads the INT8 checkpoint, which is what download_model.py fetches for CUDA.
+# Not optional there: importing it registers the tensor classes torch.load
+# needs, and installs the handling that makes those weights usable in a linear
+# layer. Pinned because 0.18+ needs torch 2.11 at run time while the CUDA
+# wheels installed above are 2.9 -- pip cannot catch that, since torchao
+# declares no dependency on torch at all.
+torchao==0.17.0; sys_platform != "darwin"
+
+# -- Global hotkeys ---------------------------------------------------------
+# The keyboard hook. Required on Windows, where it is what replaces
+# Hammerspoon; on macOS it is the alternative for anyone who would rather not
+# install Hammerspoon, and it is small.
+pynput>=1.7
+
+# -- Configuration, language models, reporting ------------------------------
+python-dotenv>=1.0
+requests>=2.31
+google-genai>=1.0
+psutil>=5.9
