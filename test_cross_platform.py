@@ -248,15 +248,37 @@ def test_backends() -> None:
         )
 
     # download_model.py has to agree with the backends about the directories.
+    # It is not a one-to-one map: the CUDA backend accepts either an INT8 or a
+    # BF16 checkpoint, so what has to hold is that every variant lands somewhere
+    # its backend looks, and that each backend's default is downloadable.
     import download_model
 
+    modules = {"mlx": mlx_backend, "torch": torch_backend}
     for name, source in download_model.SOURCES.items():
-        expected = {"mlx": mlx_backend, "torch": torch_backend}[name].DEFAULT_MODEL_PATH
+        backend = modules[str(source["backend"])]
+        looks_in = {path.lstrip("./") for path in backend.CANDIDATE_MODEL_PATHS}
         check(
-            expected.lstrip("./") == str(source["dest"]),
-            f"the downloader puts the {name} checkpoint where the backend looks",
+            str(source["dest"]) in looks_in,
+            f"the downloader puts {name} where the {backend.NAME} backend looks",
         )
         check(bool(source["required"]), f"the {name} download is checked for completeness")
+
+    for backend_name, variant in download_model.DEFAULT_VARIANT.items():
+        check(
+            download_model.SOURCES[variant]["backend"] == backend_name,
+            f"the default {backend_name} variant is one of its own",
+        )
+        check(
+            str(download_model.SOURCES[variant]["dest"])
+            == modules[backend_name].DEFAULT_MODEL_PATH.lstrip("./"),
+            f"and it lands where {backend_name} looks first",
+        )
+
+    check(
+        torch_backend.resolve_model_path().lstrip("./")
+        in {str(source["dest"]) for source in download_model.SOURCES.values()},
+        "the CUDA backend resolves to a checkpoint the downloader can fetch",
+    )
 
 
 def test_platform_support() -> None:
@@ -490,6 +512,159 @@ def test_no_undefined_names() -> None:
         )
 
 
+
+def test_checkpoint_formats() -> None:
+    """The two shard formats, both loaded on whichever machine this is.
+
+    Windows reads either the original safetensors shards or the pickle shards a
+    torchao INT8 conversion ships as, and picks the second by default. Neither
+    path runs on a Mac in normal use, so both are exercised here on a model
+    small enough to build in memory: a checkpoint is written in the *source*
+    naming the real ones use, loaded back, and compared tensor for tensor.
+
+    What this cannot check is the quantized weights themselves -- making one
+    needs torchao and a GPU. What it does check is everything around them: the
+    index, the shard reader, the name mapping, the codebook-head split, and the
+    meta-device construction that the loading depends on.
+    """
+    print("\ncheckpoint formats")
+    try:
+        import torch
+    except ImportError:
+        check(True, "skipped: torch is not installed")
+        return
+
+    import json
+    import tempfile
+
+    sys.path.insert(0, str(PROJECT / "breeze-tts-torch"))
+    sys.path.insert(0, str(PROJECT / "breeze-tts-mlx"))
+    from breeze_tts_mlx.config import BreezeMLXConfig
+    from breeze_tts_torch.model import BreezeTorchModel, find_index
+
+    # The shrunken configuration the parity test already defines: the real
+    # one's shape, small enough to build twice in memory.
+    from test_torch_parity import BASE_CONFIG
+
+    torch.set_grad_enabled(False)
+
+    def to_source_names(state: dict) -> dict:
+        """Our parameter names, back to the ones a checkpoint actually uses.
+
+        The inverse of ``map_source_tensor``. Written out rather than derived,
+        so that a change to the mapping fails this test instead of being
+        mirrored into it automatically.
+        """
+        heads: dict[int, torch.Tensor] = {}
+        source: dict[str, torch.Tensor] = {}
+        for name, tensor in state.items():
+            if name.startswith("depth_decoder.codebooks_head.heads."):
+                index = int(name.split(".")[3])
+                heads[index] = tensor.T.contiguous()
+            elif name == "depth_decoder.input_projection.weight":
+                source["depth_decoder.model.inputs_embeds_projector.weight"] = tensor
+            elif name.startswith("depth_decoder."):
+                source["depth_decoder.model." + name[len("depth_decoder."):]] = tensor
+            elif name.startswith("backbone."):
+                source["backbone_model." + name[len("backbone."):]] = tensor
+            elif name == "audio_embedding.embedding.weight":
+                source["depth_decoder.model.embed_tokens.weight"] = tensor
+            elif name == "text_encoder.embed_tokens.embedding.weight":
+                source["text_encoder.embed_tokens.weight"] = tensor
+            else:
+                source[name] = tensor
+        source["depth_decoder.codebooks_head.weight"] = torch.stack(
+            [heads[index] for index in sorted(heads)]
+        )
+        return source
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        config_path = root / "config.json"
+        config_path.write_text(json.dumps(BASE_CONFIG))
+        reference = BreezeTorchModel(BreezeMLXConfig.from_file(config_path))
+        reference.eval()
+        original = {
+            name: tensor.to(torch.bfloat16) if tensor.is_floating_point() else tensor
+            for name, tensor in reference.state_dict().items()
+        }
+        source = to_source_names(original)
+
+        # Split across two shards, so the per-shard loop is exercised rather
+        # than a single-file shortcut.
+        names = sorted(source)
+        halves = (names[: len(names) // 2], names[len(names) // 2 :])
+
+        for kind, index_name, shard_pattern, writer in (
+            (
+                "safetensors",
+                "model.safetensors.index.json",
+                "model-{n:05d}-of-00002.safetensors",
+                None,
+            ),
+            (
+                "pickle",
+                "pytorch_model.bin.index.json",
+                "pytorch_model-{n:05d}-of-00002.bin",
+                torch.save,
+            ),
+        ):
+            checkpoint = root / kind
+            checkpoint.mkdir()
+            (checkpoint / "config.json").write_text(json.dumps(BASE_CONFIG))
+            weight_map = {}
+            for number, half in enumerate(halves, start=1):
+                shard_name = shard_pattern.format(n=number)
+                payload = {name: source[name] for name in half}
+                if writer is None:
+                    from safetensors.torch import save_file
+
+                    save_file(
+                        {k: v.contiguous() for k, v in payload.items()},
+                        str(checkpoint / shard_name),
+                    )
+                else:
+                    writer(payload, checkpoint / shard_name)
+                weight_map.update({name: shard_name for name in half})
+            (checkpoint / index_name).write_text(json.dumps({"weight_map": weight_map}))
+
+            _path, detected = find_index(checkpoint)
+            check(detected == kind, f"a {kind} checkpoint is recognised as one")
+
+            loaded = BreezeTorchModel.from_checkpoint(
+                checkpoint, device="cpu", dtype=torch.bfloat16
+            )
+            state = loaded.state_dict()
+            check(
+                set(state) == set(original),
+                f"{kind}: every parameter is filled, and no extra ones appear",
+            )
+            worst = max(
+                float((state[name].float() - original[name].float()).abs().max())
+                for name in original
+            )
+            check(worst == 0.0, f"{kind}: every weight round-trips exactly")
+            check(
+                not any(t.is_meta for t in state.values()),
+                f"{kind}: nothing is left on the meta device",
+            )
+            check(
+                all(not p.requires_grad for p in loaded.parameters()),
+                f"{kind}: loaded for inference, not training",
+            )
+
+        # A directory with neither index is refused by name, not by a later
+        # failure inside a matmul.
+        empty = root / "empty"
+        empty.mkdir()
+        (empty / "config.json").write_text(json.dumps(BASE_CONFIG))
+        raises(
+            FileNotFoundError,
+            lambda: BreezeTorchModel.from_checkpoint(empty, device="cpu"),
+            "a directory that is not a checkpoint is refused with what is missing",
+        )
+
+
 def main() -> int:
     print("cross-platform checks")
     test_bindings()
@@ -498,6 +673,7 @@ def main() -> int:
     test_platform_support()
     test_config_round_trip()
     test_no_undefined_names()
+    test_checkpoint_formats()
 
     print()
     if FAILED:

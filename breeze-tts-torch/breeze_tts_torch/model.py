@@ -8,20 +8,46 @@ load *differently* here.
 
 What this does not do is read MLX's INT8 artifact. Those weights are packed in
 MLX's affine quantization format -- scales and biases per group of 64, in MLX's
-own layout -- and nothing in PyTorch reads it. Windows loads the untouched
-Hugging Face shards instead; MODELS.md says which ones and how to fetch them.
+own layout -- and nothing in PyTorch reads it. Windows has its own quantization,
+described below; MODELS.md says which checkpoints exist and how to fetch them.
+
+Two checkpoint formats
+----------------------
+*Safetensors*, ``model.safetensors.index.json`` plus shards: the original BF16
+weights. Read one tensor at a time, so host memory never holds more than what is
+being copied to the GPU.
+
+*Pickle*, ``pytorch_model.bin.index.json`` plus ``.bin`` shards: how a torchao
+INT8 conversion ships, because transformers cannot currently round-trip an INT8
+torchao checkpoint through safetensors. The quantized weights are not tensors
+but tensor *subclasses* -- ``torch.load`` reconstructs them, and they behave as
+weights because torchao intercepts ``F.linear`` on them. Two consequences the
+code below has to respect: a subclass must not be cast or transposed like a
+plain tensor, and a whole shard is materialized at once rather than tensor by
+tensor, so loading briefly needs about 5 GB of host RAM.
+
+Which layers are quantized is the checkpoint's decision, not ours. In the
+published INT8 conversion it is the backbone and depth-decoder linears; the text
+encoder, the embeddings, the LM head and every norm stay BF16. Nothing here
+needs to know that -- each tensor arrives already in whatever form it was saved.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Callable, Iterator
 
 import torch
 from safetensors import safe_open
 from torch import nn
 
-from ._shared import BreezeConfig, load_weight_map, map_source_tensor
+from ._shared import BreezeConfig, map_source_tensor
+
+logger = logging.getLogger("breeze.torch.model")
 from .backbone import Qwen3Backbone
 from .depth_decoder import BreezeDepthDecoder
 from .text_encoder import T5GemmaTextEncoder
@@ -43,6 +69,97 @@ def resolve_dtype(name: str) -> torch.dtype:
             f"Unsupported dtype {name!r}; choose one of {sorted(set(DTYPES))}"
         )
     return DTYPES[key]
+
+
+# --------------------------------------------------------------------------
+# Reading a checkpoint, in either of the two formats it ships in
+# --------------------------------------------------------------------------
+SAFETENSORS_INDEX = "model.safetensors.index.json"
+PICKLE_INDEX = "pytorch_model.bin.index.json"
+
+
+def find_index(checkpoint_dir: Path) -> tuple[Path, str]:
+    """The shard index and which format it describes."""
+    for name, kind in ((SAFETENSORS_INDEX, "safetensors"), (PICKLE_INDEX, "pickle")):
+        path = checkpoint_dir / name
+        if path.is_file():
+            return path, kind
+    raise FileNotFoundError(
+        f"{checkpoint_dir} has neither {SAFETENSORS_INDEX} nor {PICKLE_INDEX}, so it "
+        "is not a complete Hugging Face checkpoint. MLX's INT8 artifact cannot be "
+        "loaded by the CUDA backend -- see MODELS.md."
+    )
+
+
+def read_weight_map(index_path: Path) -> dict[str, str]:
+    with index_path.open("r", encoding="utf-8") as handle:
+        index = json.load(handle)
+    weight_map = index.get("weight_map")
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise ValueError(f"Invalid or empty weight_map in {index_path}")
+    return {str(name): str(shard) for name, shard in weight_map.items()}
+
+
+# The two types a dense weight can arrive as. Anything else is a tensor
+# subclass carrying packed data and its own scales.
+_DENSE_TYPES = (torch.Tensor, nn.Parameter)
+
+
+def is_plain(tensor: Any) -> bool:
+    """Whether this is an ordinary tensor rather than a quantized subclass.
+
+    ``isinstance`` would be true for both -- torchao's tensors *are* Tensors.
+    What matters is the exact type: a subclass carries packed data and its own
+    scales, and casting or transposing it as if it were a dense array either
+    fails or silently produces something that is no longer the saved weight.
+    """
+    return type(tensor) in _DENSE_TYPES
+
+
+def require_torchao(checkpoint_dir: Path) -> None:
+    """Import torchao, which is what makes a quantized checkpoint loadable.
+
+    Importing it registers its tensor classes as safe globals for
+    ``torch.load``, and installs the ``F.linear`` handling that makes the
+    loaded weights usable. Without it the load fails inside pickle with a
+    message about an unsupported global, which names neither torchao nor this.
+    """
+    try:
+        import torchao  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            f"{checkpoint_dir.name} is a torchao INT8 checkpoint, and torchao is "
+            "not installed. Run `pip install torchao`, or download the BF16 "
+            "checkpoint instead:\n"
+            "    python download_model.py --variant torch-bf16"
+        ) from exc
+
+
+@contextmanager
+def open_shard(path: Path, kind: str) -> Iterator[Callable[[str], Any]]:
+    """Yield a ``get(name) -> tensor`` for one shard, in either format."""
+    if kind == "safetensors":
+        with safe_open(str(path), framework="pt", device="cpu") as handle:
+            yield handle.get_tensor
+        return
+
+    # weights_only=True still reconstructs torchao's tensors, because importing
+    # torchao allowlists them. It is kept on: these files are several gigabytes
+    # downloaded from a model host, and unpickling them arbitrarily is not
+    # something to do by default.
+    try:
+        loaded = torch.load(path, map_location="cpu", weights_only=True)
+    except Exception as exc:  # noqa: BLE001 - re-raised with what to do about it
+        raise RuntimeError(
+            f"Could not read {path.name}: {exc}\n"
+            "This is usually a torchao version mismatch -- the checkpoint was "
+            "written with 0.17 and its tensor classes have to be the ones "
+            "torch.load can reconstruct. Try `pip install torchao==0.17.0`."
+        ) from exc
+    try:
+        yield loaded.__getitem__
+    finally:
+        loaded.clear()
 
 
 class SharedAudioEmbedding(nn.Module):
@@ -115,21 +232,41 @@ class BreezeTorchModel(nn.Module):
         config_path = checkpoint_dir / "config.json"
         if not config_path.is_file():
             raise FileNotFoundError(f"Missing {config_path}")
-        if not (checkpoint_dir / "model.safetensors.index.json").is_file():
-            raise FileNotFoundError(
-                f"{checkpoint_dir} is not a complete Hugging Face checkpoint: no "
-                "model.safetensors.index.json. The MLX INT8 artifact cannot be "
-                "loaded by the CUDA backend -- see MODELS.md."
-            )
+        index_path, kind = find_index(checkpoint_dir)
 
-        # Built on the meta device so the 6 GB of randomly initialized weights
-        # PyTorch would otherwise allocate, and immediately overwrite, are never
-        # allocated at all. On a 8 GB card that difference is load-or-fail.
+        with config_path.open("r", encoding="utf-8") as handle:
+            raw_config = json.load(handle)
+        quantized = bool(raw_config.get("quantization_config"))
+        if quantized:
+            require_torchao(checkpoint_dir)
+            # The BF16 parts of a quantized checkpoint have to stay the dtype
+            # the quantized parts dequantize into, or every matmul that mixes
+            # them fails. So the checkpoint's own dtype wins over the setting.
+            declared = resolve_dtype(
+                str(raw_config.get("dtype") or raw_config.get("torch_dtype") or "bfloat16")
+            )
+            if declared != dtype:
+                logger.info(
+                    "%s is quantized and stores its unquantized weights as %s; "
+                    "using that instead of the configured %s",
+                    checkpoint_dir.name, declared, dtype,
+                )
+            dtype = declared
+
+        # Built on the meta device so the several gigabytes of randomly
+        # initialized weights PyTorch would otherwise allocate, and immediately
+        # overwrite, are never allocated at all. On an 8 GB card that difference
+        # is load-or-fail.
         with torch.device("meta"):
             model = cls(BreezeConfig.from_file(config_path))
         model.set_compute_dtype(dtype)
+        # Before loading, not after: assign=True wraps each incoming tensor in a
+        # Parameter inheriting the placeholder's requires_grad, and a quantized
+        # subclass asked to require gradients raises.
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
 
-        weight_map = load_weight_map(checkpoint_dir)
+        weight_map = read_weight_map(index_path)
         by_shard: dict[str, list[str]] = defaultdict(list)
         for source_name in weight_map:
             if map_source_tensor(source_name) is not None:
@@ -149,20 +286,25 @@ class BreezeTorchModel(nn.Module):
             if not shard_path.is_file():
                 raise FileNotFoundError(
                     f"Missing checkpoint shard {shard_path}. Download the complete "
-                    "Hugging Face snapshot -- see MODELS.md."
+                    "snapshot -- see MODELS.md."
                 )
-            # One shard open at a time, and each tensor materialized on the
-            # target device as it is read: peak host memory stays at one shard
-            # rather than at the whole checkpoint.
-            with safe_open(str(shard_path), framework="pt", device="cpu") as handle:
+            with open_shard(shard_path, kind) as get_tensor:
                 for source_name in sorted(names):
                     target = map_source_tensor(source_name)
                     assert target is not None
-                    tensor = handle.get_tensor(source_name)
-                    if tensor.is_floating_point():
+                    tensor = get_tensor(source_name)
+                    plain = is_plain(tensor)
+                    if plain and tensor.is_floating_point():
                         tensor = tensor.to(dtype)
                     prefix = prefixes[target.component]
                     if target.transform == "split_codebook_heads":
+                        if not plain:
+                            raise RuntimeError(
+                                f"{source_name} is quantized, but it has to be "
+                                "split into fifteen separate heads, which needs a "
+                                "dense tensor. A checkpoint that quantizes "
+                                "depth_decoder.codebooks_head is not supported."
+                            )
                         if tensor.ndim != 3 or tensor.shape[0] != 15:
                             raise ValueError(
                                 "depth codebook head must have shape "
@@ -170,17 +312,15 @@ class BreezeTorchModel(nn.Module):
                             )
                         for index in range(tensor.shape[0]):
                             key = f"{prefix}{target.target_name}.{index}.weight"
-                            state[key] = (
-                                tensor[index].T.contiguous().to(device, non_blocking=True)
-                            )
+                            state[key] = tensor[index].T.contiguous().to(device)
                     else:
-                        key = f"{prefix}{target.target_name}"
-                        state[key] = tensor.to(device, non_blocking=True)
+                        state[f"{prefix}{target.target_name}"] = tensor.to(device)
                     del tensor
 
         # assign=True is what makes the meta construction work: parameters are
         # replaced by the loaded tensors rather than copied into storage that
-        # does not exist.
+        # does not exist. It is also what preserves a quantized subclass, which
+        # a copy into a dense placeholder would flatten.
         missing, unexpected = model.load_state_dict(state, strict=False, assign=True)
         if missing or unexpected:
             # A parameter left on the meta device would fail much later, inside
@@ -193,4 +333,9 @@ class BreezeTorchModel(nn.Module):
         model.eval()
         for parameter in model.parameters():
             parameter.requires_grad_(False)
+        logger.info(
+            "Loaded %s (%s, %s%s)",
+            checkpoint_dir.name, kind, dtype,
+            " + torchao int8" if quantized else "",
+        )
         return model

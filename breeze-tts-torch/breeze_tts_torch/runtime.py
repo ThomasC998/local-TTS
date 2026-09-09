@@ -133,6 +133,10 @@ class BreezeTorchRuntime:
         self.model = BreezeTorchModel.from_checkpoint(
             self.artifact_dir, device=self.torch_device, dtype=self.torch_dtype
         )
+        # A quantized checkpoint overrides the requested dtype with its own, so
+        # take back what was actually used rather than what was asked for --
+        # this is what the health endpoint reports.
+        self.torch_dtype = self.model.compute_dtype
         self.config = self.model.breeze_config.model
         # The prompt collator builds its tensors here before anything reaches
         # the GPU. Keeping it on the CPU matches the Mac path exactly, and the

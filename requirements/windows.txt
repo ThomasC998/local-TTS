@@ -12,3 +12,10 @@
 
 # The global keyboard hook. This is Windows' Hammerspoon.
 pynput>=1.7
+
+# Reads the INT8 checkpoint, which is what download_model.py fetches by default.
+# It is not optional there: importing it is what registers the tensor classes
+# torch.load needs, and what makes those weights usable in a linear layer.
+# Pinned, because 0.18+ requires torch >= 2.11 and the CUDA wheels installed
+# here are 2.9.
+torchao==0.17.0

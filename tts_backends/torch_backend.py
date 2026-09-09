@@ -13,6 +13,7 @@ server that refuses to start is easier to diagnose than one that stutters.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -24,11 +25,19 @@ if str(_RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(_RUNTIME_DIR))
 
 NAME = "torch"
-DEFAULT_MODEL_PATH = "./chkpt-breeze-tts-2"
+
+# In preference order, and both are looked for: a machine that has downloaded
+# either one should work without being told which. INT8 first because it is the
+# one `download_model.py` fetches by default -- 5.2 GB of weights against 7,
+# which is what makes an 8 GB card comfortable.
+CANDIDATE_MODEL_PATHS = ("./chkpt-breeze-tts-2-int8", "./chkpt-breeze-tts-2")
+DEFAULT_MODEL_PATH = CANDIDATE_MODEL_PATHS[0]
 
 # BF16 by default: the checkpoint was trained in it, and every NVIDIA card from
 # Ampere (RTX 30-series) on runs it natively. Set BREEZE_TORCH_DTYPE=float16 on
-# an older card -- Turing and Pascal emulate BF16 slowly.
+# an older card -- Turing and Pascal emulate BF16 slowly. A quantized checkpoint
+# overrides this with its own dtype, because its unquantized weights have to
+# match what its quantized ones dequantize into.
 DTYPE_ENV = "BREEZE_TORCH_DTYPE"
 DEVICE_ENV = "BREEZE_TORCH_DEVICE"
 
@@ -49,15 +58,57 @@ def unavailable_reason() -> str | None:
     return None
 
 
+def resolve_model_path() -> str:
+    """The checkpoint directory to use: whichever one is actually here."""
+    root = Path(__file__).resolve().parent.parent
+    for candidate in CANDIDATE_MODEL_PATHS:
+        if (root / candidate).is_dir():
+            return candidate
+    return DEFAULT_MODEL_PATH
+
+
+def checkpoint_precision(model_path: str | Path | None = None) -> str:
+    """What the checkpoint on disk actually is, rather than what was asked for.
+
+    Read from its config, because a quantized checkpoint decides its own
+    precision and the BREEZE_TORCH_DTYPE setting does not apply to it.
+    """
+    root = Path(__file__).resolve().parent.parent
+    path = Path(model_path or resolve_model_path())
+    if not path.is_absolute():
+        path = root / path
+    config = path / "config.json"
+    if not config.is_file():
+        return os.getenv(DTYPE_ENV, "bfloat16")
+    try:
+        with config.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return os.getenv(DTYPE_ENV, "bfloat16")
+    stored = str(raw.get("dtype") or raw.get("torch_dtype") or "bfloat16")
+    quantization = raw.get("quantization_config") or {}
+    if quantization:
+        method = str(quantization.get("quant_method") or "quantized")
+        return f"int8 ({method}) + {stored}"
+    return os.getenv(DTYPE_ENV, stored)
+
+
 def describe() -> dict[str, Any]:
     import torch
 
+    model_path = resolve_model_path()
     info: dict[str, Any] = {
         "device": "cpu",
-        "precision": os.getenv(DTYPE_ENV, "bfloat16"),
-        "model_path": DEFAULT_MODEL_PATH,
+        "precision": checkpoint_precision(model_path),
+        "model_path": model_path,
         "torch_version": torch.__version__,
     }
+    try:
+        import torchao
+
+        info["torchao_version"] = torchao.__version__
+    except Exception:  # noqa: BLE001 - only needed for a quantized checkpoint
+        info["torchao_version"] = None
     if torch.cuda.is_available():
         index = torch.cuda.current_device()
         free, total = torch.cuda.mem_get_info(index)

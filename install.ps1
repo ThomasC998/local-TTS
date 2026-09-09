@@ -102,9 +102,9 @@ $gpu = (& nvidia-smi --query-gpu=name,memory.total --format=csv,noheader) | Sele
 Ok "$gpu"
 $memoryMiB = [int](($gpu -split ',')[1] -replace '[^\d]', '')
 if ($memoryMiB -lt 8000) {
-    Warn "Under 8 GB of VRAM. The model needs about 7 GB in BF16 -- if it does not"
-    Say  "         fit, set BREEZE_TORCH_DTYPE=float16 in .env, which halves nothing"
-    Say  "         but is worth trying, and close other GPU applications."
+    Warn "Under 8 GB of VRAM. The INT8 checkpoint installed below needs about"
+    Say  "         5.2 GB of it, so this may still work with other GPU"
+    Say  "         applications closed -- but it will be tight."
 }
 
 # ---------------------------------------------------------------------------
@@ -153,6 +153,25 @@ Ok "PyTorch sees $($deviceName.Trim())"
 Step "Python packages"
 & $python -m pip install -r (Join-Path $Project "requirements\windows.txt")
 Ok "Installed"
+
+# Checked again, deliberately. Any package that declares torch as a dependency
+# can pull the CPU wheel from PyPI over the CUDA one installed above, and the
+# only symptom is the server refusing to start much later. Better to find out
+# here, while it is obvious what happened.
+$cudaStillOk = (& $python -c "import torch; print(torch.cuda.is_available())")
+if ($cudaStillOk.Trim() -ne "True") {
+    Fail "Installing the requirements replaced PyTorch with a CPU-only build."
+    Say  "         Put the CUDA one back with:"
+    Say  "         pip install --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/$Cuda"
+    exit 1
+}
+$torchao = (& $python -c "import torchao; print(torchao.__version__)" 2>&1)
+if ($LASTEXITCODE -eq 0) {
+    Ok "torchao $($torchao.Trim()) -- the INT8 checkpoint is readable"
+} else {
+    Warn "torchao did not import. The INT8 checkpoint needs it; the BF16 one does not."
+    Say  "         python download_model.py --variant torch-bf16"
+}
 
 # ---------------------------------------------------------------------------
 # SoX

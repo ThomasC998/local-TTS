@@ -19,7 +19,17 @@ if str(_RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(_RUNTIME_DIR))
 
 NAME = "mlx"
-DEFAULT_MODEL_PATH = "./chkpt-mlx-int8"
+CANDIDATE_MODEL_PATHS = ("./chkpt-mlx-int8",)
+DEFAULT_MODEL_PATH = CANDIDATE_MODEL_PATHS[0]
+
+
+def resolve_model_path() -> str:
+    """The checkpoint directory to use. Only one shape of artifact runs here."""
+    root = Path(__file__).resolve().parent.parent
+    for candidate in CANDIDATE_MODEL_PATHS:
+        if (root / candidate).is_dir():
+            return candidate
+    return DEFAULT_MODEL_PATH
 
 
 def unavailable_reason() -> str | None:
@@ -41,7 +51,7 @@ def describe() -> dict[str, Any]:
     return {
         "device": f"Apple Silicon (Metal), {platform.machine()}",
         "precision": "int8",
-        "model_path": DEFAULT_MODEL_PATH,
+        "model_path": resolve_model_path(),
         "cache_limit": int(mx.get_cache_memory()),
     }
 

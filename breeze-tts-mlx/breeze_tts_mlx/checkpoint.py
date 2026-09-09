@@ -22,7 +22,17 @@ COMPONENT_FILES = {
     "lm_head": "lm_head.safetensors",
 }
 
-INACTIVE_PREFIXES = ("embed_text_tokens.", "codec_model.")
+# Weights no backend loads. The first two are unreachable from this project's
+# pipeline. The third is the audio embedding table again: the config ties it
+# (`tie_codebooks_embeddings`), so the one physical copy comes from the depth
+# decoder, but a quantized conversion materializes the tied copy as a real
+# tensor rather than a reference -- so it is present in the int8 checkpoint and
+# absent from the original, and skipping it is what makes one mapping serve both.
+INACTIVE_PREFIXES = (
+    "embed_text_tokens.",
+    "codec_model.",
+    "backbone_model.embed_tokens.",
+)
 
 
 @dataclass(frozen=True)

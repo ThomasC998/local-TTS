@@ -14,6 +14,7 @@ that is visible while using it.
 | | macOS | Windows 11 |
 | :--- | :--- | :--- |
 | Hardware | Apple Silicon (M1 or newer) | An NVIDIA GPU, 8 GB VRAM or more |
+| Model on disk | 3.5 GB | 5.9 GB (INT8) or 7 GB (BF16) |
 | Python | 3.10 – 3.12 | 3.10 – 3.12 |
 | Also needed | [SoX](http://sox.sourceforge.net) — the installer offers it | SoX, likewise |
 
@@ -42,8 +43,8 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 Either one creates a virtual environment, installs the right build of PyTorch
 for your machine, offers to install SoX, copies `.env.example` to `.env`, and
-downloads the speech model (3.5 GB on a Mac, 7 GB on Windows). It is safe to run
-again; the model download resumes where it stopped.
+downloads the speech model (3.5 GB on a Mac, 5.9 GB on Windows). It is safe to
+run again; the model download resumes where it stopped.
 
 Then:
 
@@ -182,7 +183,7 @@ difference is in a directory named for it.
 | **The shortcuts, and both hotkey hosts** | `hotkeys/` |
 | Installers | `install.sh`, `install.ps1`, `download_model.py`, `install_hotkeys.py` |
 | Configuration | `.env`, `state/system_speech.json` |
-| Checkpoint | `chkpt-mlx-int8/` or `chkpt-breeze-tts-2/` — not in the repository |
+| Checkpoint | `chkpt-mlx-int8/` or `chkpt-breeze-tts-2-int8/` — not in the repository |
 
 The four bold rows are the whole of the platform difference. Everything else is
 the same code running on both machines.
@@ -441,8 +442,8 @@ Without `--startup` nothing is added to your login items. Installing one because
 a script happened to be run is exactly what an installer should ask about first.
 
 The server holds the checkpoint resident for as long as it runs, so starting it
-at login is a standing memory cost — 3 GB of unified memory on a Mac, 7 GB of
-VRAM on Windows. If that is not wanted, leave it out and start the server by
+at login is a standing memory cost — 3 GB of unified memory on a Mac, about
+5.2 GB of VRAM on Windows. If that is not wanted, leave it out and start the server by
 hand; the hotkeys report "Breeze server is not running" rather than failing
 silently.
 
@@ -758,8 +759,18 @@ program, not a Python package. `brew install sox`, or
 `winget install --id ChrisBagwell.SoX` and then open a new terminal so `PATH`
 picks it up.
 
-**Out of VRAM on Windows.** The model is about 7 GB in BF16. Close other GPU
-applications, and try `BREEZE_TORCH_DTYPE=float16` in `.env`.
+**Out of VRAM on Windows.** The INT8 checkpoint is about 5.2 GB of weights and
+the BF16 one about 7 GB. Close other GPU applications; if you are on BF16,
+`python download_model.py --variant torch-int8` saves nearly 2 GB.
+
+**"is a torchao INT8 checkpoint, and torchao is not installed".** `pip install
+torchao==0.17.0`, or use the BF16 checkpoint instead with
+`python download_model.py --variant torch-bf16`. The pin matters: torchao 0.18+
+needs torch 2.11, and the CUDA wheels the installer fetches are 2.9.
+
+**Generation cannot keep up with playback on Windows.** Weight-only INT8 buys
+disk and memory, not necessarily speed — on some hardware every linear
+dequantizes before the matmul. Try `--variant torch-bf16` if you have the VRAM.
 
 **Playback crackles.** See [Sample rates](#sample-rates-and-the-crackle-that-comes-from-getting-them-wrong).
 The **System speech** tab shows the rate pair and underrun count live.

@@ -119,6 +119,6 @@ def default_model_path() -> str:
     if configured:
         return configured
     try:
-        return load_backend().DEFAULT_MODEL_PATH
+        return load_backend().resolve_model_path()
     except BackendUnavailable:
         return "./chkpt-mlx-int8"
