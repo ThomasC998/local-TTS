@@ -831,6 +831,102 @@ def test_entry_points_read_env() -> None:
     check(not unused, f"every documented setting is read somewhere" + (f" (orphans: {unused})" if unused else ""))
 
 
+
+# The one voice that ships, so a fresh clone can speak before the user has
+# recorded anything. Named here rather than discovered, because "whatever
+# happens to be in voices/" is exactly the thing this test exists to prevent.
+BUNDLED_VOICE = "voice_132150d40e9e455b97362ad6"
+
+
+def test_bundled_voice() -> None:
+    """The shipped voice: exactly one, complete, and readable on this platform.
+
+    Two different failures are being guarded here.
+
+    *Too much shipping.* voices/ holds recordings of real people. Exactly one is
+    meant to be in the repository, and the .gitignore that arranges that is
+    fiddly -- a negation under an excluded directory never matches, and one
+    placed above `*.wav` is overruled by it. Either mistake is silent: the
+    profile commits and the audio does not, or seven other people's voices go
+    along for the ride.
+
+    *Audio that does not decode.* The reference is MPEG-in-WAV, which needs the
+    MPEG support in libsndfile. Every recent `soundfile` wheel has it, on both
+    platforms -- but if a build ever does not, this is where it should fail,
+    rather than in the middle of someone's first attempt to hear anything.
+    """
+    print("\nbundled voice")
+    import json
+    import subprocess
+
+    directory = PROJECT / "voices" / BUNDLED_VOICE
+    check(directory.is_dir(), f"{BUNDLED_VOICE} is present")
+    if not directory.is_dir():
+        return
+
+    profile_path = directory / "profile.json"
+    check(profile_path.is_file(), "it has a profile.json")
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    check(profile.get("voice_id") == BUNDLED_VOICE, "whose voice_id matches its directory")
+    references = profile.get("references") or []
+    check(bool(references), "and at least one reference")
+
+    for reference in references:
+        audio = directory / str(reference.get("file"))
+        check(audio.is_file(), f"reference {reference.get('reference_id')} has its audio file")
+
+    # Decoded the way encode_prompt_audio decodes it, not merely opened.
+    try:
+        import numpy as np
+        import soundfile as sf
+    except ImportError:
+        check(True, "skipped: soundfile is not installed")
+        return
+
+    audio_path = directory / str(profile["reference"]["file"])
+    try:
+        samples, rate = sf.read(audio_path, always_2d=True, dtype="float32")
+    except Exception as exc:  # noqa: BLE001
+        check(False, f"the reference decodes ({exc})")
+        return
+    mono = np.mean(samples, axis=1)
+    seconds = len(mono) / rate
+    check(bool(np.isfinite(mono).all()), "the reference decodes to finite samples")
+    check(float(np.abs(mono).max()) > 0.01, "...that are not silence")
+
+    import voice_store
+
+    check(
+        seconds >= voice_store.REFERENCE_MIN_SECONDS,
+        f"and it is long enough to clone from ({seconds:.1f}s, "
+        f"minimum {voice_store.REFERENCE_MIN_SECONDS:.0f}s)",
+    )
+
+    # What the repository actually carries, asked of git rather than of the
+    # working tree -- the untracked voices sitting beside it are the whole point.
+    try:
+        tracked = subprocess.run(
+            ["git", "ls-files", "voices/"],
+            cwd=PROJECT, capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        check(True, "skipped: git is not available to check what is committed")
+        return
+    if tracked.returncode != 0:
+        check(True, "skipped: not a git checkout")
+        return
+    committed = [line for line in tracked.stdout.splitlines() if line.strip()]
+    identifiers = {line.split("/")[1] for line in committed if line.startswith("voices/")}
+    check(
+        identifiers == {BUNDLED_VOICE},
+        f"exactly one voice is committed" + (f" (found {sorted(identifiers)})" if identifiers != {BUNDLED_VOICE} else ""),
+    )
+    check(
+        any(line.endswith(".wav") for line in committed),
+        "...including its audio, which the *.wav rule would otherwise have eaten",
+    )
+
+
 def main() -> int:
     print("cross-platform checks")
     test_bindings()
@@ -842,6 +938,7 @@ def main() -> int:
     test_checkpoint_formats()
     test_requirements()
     test_entry_points_read_env()
+    test_bundled_voice()
 
     print()
     if FAILED:

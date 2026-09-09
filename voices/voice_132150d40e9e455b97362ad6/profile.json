@@ -1,0 +1,88 @@
+{
+  "voice_id": "voice_132150d40e9e455b97362ad6",
+  "name": "male narrator best",
+  "description": null,
+  "notes": null,
+  "origin": "cloned",
+  "voice_type": "personal",
+  "created_at_unix": 1788838383,
+  "updated_at_unix": 1788838383,
+  "is_favorited": false,
+  "tags": [],
+  "language_code": null,
+  "gender": null,
+  "age": null,
+  "tone": [],
+  "accent": null,
+  "settings": {
+    "guidance_scale": 4.0
+  },
+  "generation": {
+    "instruction": null,
+    "mode": "clone",
+    "cfg_scale": 4.0,
+    "seed": null,
+    "temperature": null,
+    "top_k": null,
+    "top_p": null,
+    "greedy": null,
+    "repetition_penalty": null,
+    "max_new_tokens": null,
+    "max_seq_len": null,
+    "codec_chunk_frames": null,
+    "max_words": null
+  },
+  "sample": {
+    "file": "reference.wav",
+    "text": "Hey, so, I was just thinking about this: Sometimes you start your day with absolutely no idea how it’s going to go. You grab a coffee, check your phone, and suddenly, wait, what? It’s already ten o’clock. Anyway, it’s fine. Take a breath, slow down.  We’ve got plenty of time! Actually, you know what? I think today’s going to be a good day.",
+    "duration_seconds": 24.633
+  },
+  "reference": {
+    "file": "reference.wav",
+    "text": "Hey, so, I was just thinking about this: Sometimes you start your day with absolutely no idea how it’s going to go. You grab a coffee, check your phone, and suddenly, wait, what? It’s already ten o’clock. Anyway, it’s fine. Take a breath, slow down.  We’ve got plenty of time! Actually, you know what? I think today’s going to be a good day.",
+    "duration_seconds": 24.633,
+    "source": "upload"
+  },
+  "references": [
+    {
+      "reference_id": "ref_base",
+      "file": "reference.wav",
+      "text": "Hey, so, I was just thinking about this: Sometimes you start your day with absolutely no idea how it’s going to go. You grab a coffee, check your phone, and suddenly, wait, what? It’s already ten o’clock. Anyway, it’s fine. Take a breath, slow down.  We’ve got plenty of time! Actually, you know what? I think today’s going to be a good day.",
+      "label": "base",
+      "tags": [
+        "base"
+      ],
+      "duration_seconds": 24.633,
+      "source": "upload",
+      "enabled": true,
+      "is_default": true,
+      "created_at_unix": 1788838383,
+      "instruction": null,
+      "generation": {
+        "instruction": null,
+        "mode": "clone",
+        "cfg_scale": 4.0,
+        "seed": null,
+        "temperature": null,
+        "top_k": null,
+        "top_p": null,
+        "greedy": null,
+        "repetition_penalty": null,
+        "max_new_tokens": null,
+        "max_seq_len": null,
+        "codec_chunk_frames": null,
+        "max_words": null
+      },
+      "generated_voice_id": null
+    }
+  ],
+  "rotation": {
+    "enabled": true,
+    "mode": "random",
+    "every_words": 1000,
+    "boundary": "paragraph",
+    "tags": []
+  },
+  "sample_rate": 44100,
+  "generated_voice_id": null
+}

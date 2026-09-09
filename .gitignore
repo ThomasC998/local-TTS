@@ -6,11 +6,6 @@ chkpt-breeze-tts-2/
 chkpt-full/
 chkpt-mlx-int4/
 
-# The saved voice library: recordings of real people, and the profiles built
-# from them. Personal data, and nothing here can be reconstructed from source --
-# so it is kept on this machine and never in a commit. Back it up separately.
-voices/
-
 # Local configuration: the language-model provider, API keys, the checkpoint
 # path. Per-machine by definition, and .env.example is what belongs in the repo.
 .env
@@ -44,3 +39,23 @@ __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+
+# ---------------------------------------------------------------------------
+# The voice library
+#
+# Recordings of real people and the profiles built from them: personal data,
+# none of it reconstructable from source, so it stays on the machine that made
+# it and is backed up separately. One voice is the exception -- it ships, so
+# that a fresh clone has something to speak with before the user has recorded
+# anything.
+#
+# These rules are last on purpose. Git applies the *last* matching pattern, so
+# a negation placed above `*.wav` would be overruled by it, and the reference
+# audio would silently not be committed while the profile beside it was. And
+# the directory is excluded as `voices/*` rather than `voices/`, because git
+# does not look inside an excluded directory at all -- a negation under one
+# never matches.
+# ---------------------------------------------------------------------------
+voices/*
+!voices/voice_132150d40e9e455b97362ad6/
+!voices/voice_132150d40e9e455b97362ad6/**

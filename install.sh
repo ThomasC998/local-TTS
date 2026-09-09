@@ -168,7 +168,8 @@ echo "Start the server:"
 [ "$USE_VENV" = 1 ] && echo "    source .venv/bin/activate"
 echo "    python breeze_server.py"
 echo
-echo "Then open http://127.0.0.1:7860 and record or design a voice."
+echo "Then open http://127.0.0.1:7860. One voice ships with the repository,"
+echo "so it will speak straight away; design or clone your own when you want to."
 echo
 echo "For the global hotkeys -- copy anything, press a key, hear it read:"
 echo "    python install_hotkeys.py --startup"

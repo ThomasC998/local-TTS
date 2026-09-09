@@ -119,6 +119,12 @@ python breeze_server.py
 
 Then open <http://127.0.0.1:7860>.
 
+**One voice ships with the repository**, so steps 2 to 4 are optional the first
+time — install the hotkeys and press one, and it will read your clipboard in a
+male narrator's voice straight away. Come back and make your own when you want
+a different one. Everything else in `voices/` stays on the machine that made it:
+those are recordings of real people, and they are not something to commit.
+
 **2. Make a voice.** On **Design a voice**, describe the speaker you want
 ("a calm, unhurried woman in her thirties, warm and a little dry") and generate
 five takes. Each take is a *different* voice on its own seed. Play them, pick
@@ -191,6 +197,7 @@ difference is in a directory named for it.
 | **The shortcuts, and both hotkey hosts** | `hotkeys/` |
 | Installers | `install.sh`, `install.ps1`, `requirements.txt`, `download_model.py`, `install_hotkeys.py` |
 | Configuration | `.env`, `state/system_speech.json` |
+| Voice library | `voices/` — one voice ships; the rest is yours and stays local |
 | Checkpoint | `chkpt-mlx-int8/` or `chkpt-breeze-tts-2-int8/` — not in the repository |
 
 The four bold rows are the whole of the platform difference. Everything else is
@@ -787,8 +794,11 @@ The **System speech** tab shows the rate pair and underrun count live.
 behind. Raise the safety buffer on the **System speech** tab, or shorten
 `max_words` so chunks come back sooner.
 
-**"No saved voices yet".** Design or clone one first; the hotkey needs a voice
-with a reference recording to anchor to.
+**"No saved voices yet".** One voice ships with the repository, so this means
+`voices/` did not come through the clone — check that
+`voices/voice_132150d40e9e455b97362ad6/` has both a `profile.json` and a
+`reference.wav`. Otherwise, design or clone one: the hotkey needs a voice with a
+reference recording to anchor to.
 
 **The model pass says unavailable.** `GET /v1/system-speech/config` reports which
 provider was chosen and exactly why it could not answer — a missing key, a model
