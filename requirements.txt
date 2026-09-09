@@ -6,9 +6,18 @@
 # that are not carry an environment marker, which pip evaluates per machine --
 # so a Mac never sees torchao and a PC never tries to install MLX.
 #
-# Version bounds are lower bounds, not pins: this is an application installed
-# once, and a fully pinned tree goes stale faster than it prevents breakage.
-# Where an exact version genuinely matters, the reason is written beside it.
+# Version bounds are floors and major-version ceilings, not pins: this is an
+# application installed once, and a fully pinned tree goes stale faster than it
+# prevents breakage. Where an exact version genuinely matters, the reason is
+# written beside it.
+#
+# Known-good combinations, both verified end to end on macOS by installing this
+# file into an empty environment and synthesizing:
+#
+#   torch 2.9.1  torchaudio 2.9.1   transformers 4.57.3  mlx 0.32.2  numpy 2.5.2
+#   torch 2.14.0 torchaudio 2.11.0  transformers 4.57.3  mlx 0.32.2  numpy 2.5.3
+#
+# If a future release breaks something, those are the versions to fall back to.
 #
 # ---------------------------------------------------------------------------
 # WINDOWS: install PyTorch first, or run install.ps1, which does it for you.
@@ -49,8 +58,8 @@ huggingface_hub>=0.34
 
 # torch runs the audio codec on both platforms, and the whole model on CUDA.
 # On Windows this is already satisfied by the CUDA wheel; see the note above.
-torch>=2.6
-torchaudio>=2.6
+torch>=2.6,<3
+torchaudio>=2.6,<3
 
 # The Apple-Silicon runtime. No build exists for anything else, and the marker
 # is what keeps `pip install -r requirements.txt` working on a PC.

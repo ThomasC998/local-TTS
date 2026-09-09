@@ -225,7 +225,9 @@
         </div>
         <div>
           <label for="refpath">…or server-side path</label>
-          <input type="text" id="refpath" placeholder="/Users/thomas/…/reference_zh.wav">
+          <!-- Placeholder filled in from the server's own example, so it is
+               shaped like the machine that would have to read the file. -->
+          <input type="text" id="refpath" placeholder="a path on the server">
         </div>
       </div>
       <div class="row">
@@ -365,7 +367,7 @@
           </div>
           <div>
             <label for="dRefPath">…or a path on this machine</label>
-            <input type="text" id="dRefPath" placeholder="/Users/thomas/…/reference.wav">
+            <input type="text" id="dRefPath" placeholder="a path on the server">
           </div>
         </div>
         <div class="row">
@@ -1546,6 +1548,17 @@ async function ensureMeta() {
   META = { caps, options };
   if (!$('dText').value.trim()) $('dText').value = caps.voices.default_preview_script;
   $('dCount').max = caps.voices.preview_count_max;
+
+  // A server-side path is read by the server, so the example has to look like
+  // that machine -- a Mac path shown to someone running this on Windows is
+  // worse than no example, because it is copied.
+  const refExample = (caps.parameters || []).find(p => p.name === 'ref_audio_path');
+  if (refExample && refExample.example) {
+    for (const id of ['refpath', 'dRefPath']) {
+      const field = $(id);
+      if (field) field.placeholder = refExample.example;
+    }
+  }
   return META;
 }
 ensureMeta().catch(() => {});

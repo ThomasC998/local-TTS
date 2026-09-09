@@ -337,7 +337,7 @@ check("footnote markers are not",
 check("an or-slash becomes a word",
       sanitize("read/write access") == "read or write access")
 check("...but a path is left alone",
-      sanitize("under /Users/thomas/Documents") == "under /Users/thomas/Documents")
+      sanitize("under /Users/alex/Documents") == "under /Users/alex/Documents")
 check("...and a unit is left alone", sanitize("60 km/h") == "60 km/h")
 
 # --------------------------------------------------------------------------

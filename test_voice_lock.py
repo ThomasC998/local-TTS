@@ -8,6 +8,8 @@ stops, and that the caller's own reference is never overwritten.
     python test_voice_lock.py
 """
 
+import atexit
+import shutil
 import sys
 import threading
 import tempfile
@@ -112,7 +114,14 @@ ok &= check("seed still resolved for reproducibility",
             all(c["seed"] == 42 for c in engine.calls))
 
 print("\nrequest already carries a reference:")
-reference = Path(__file__).resolve().parent / "reference_zh.wav"
+# Written here rather than shipped as a fixture. All this needs to be is a file
+# soundfile can open and measure -- the stub engine reads its duration to prove
+# the anchor is still readable at the moment it is used -- and a repository is
+# not the place for a binary that three seconds of silence can stand in for.
+_reference_dir = tempfile.mkdtemp(prefix="breeze-voice-lock-")
+reference = Path(_reference_dir) / "reference.wav"
+sf.write(reference, np.zeros(int(24000 * 3.0), dtype=np.float32), 24000)
+atexit.register(shutil.rmtree, _reference_dir, True)
 engine, _ = run(chunks, voice_lock=True, ref_audio=str(reference), ref_text="x",
                 mode="clone")
 ok &= check("every chunk uses the caller's reference, untouched",

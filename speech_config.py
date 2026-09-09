@@ -102,7 +102,7 @@ Numbers, dates and times -- write the way they are said:
 
 STRUCTURE THAT CANNOT BE READ OUT LITERALLY
 Describe it in short sentences instead of transcribing it.
-- File paths and URLs: say what it is, not what it spells. "/Users/thomas/
+- File paths and URLs: say what it is, not what it spells. "/Users/alex/
   Documents/report.pdf" -> "a report PDF in the user's Documents folder".
   "https://example.com/pricing" -> "the pricing page on example dot com". Never
   read slashes, dots or protocol prefixes character by character.
@@ -153,6 +153,10 @@ Begin your reply with the marker <<<SPEAK>>> on its own, then the text."""
 SUPERSEDED_PROMPT_HASHES = frozenset({
     # The original, before paragraph shaping and the pronunciation rules.
     "82e837e19c209fb2bbf8907786f1c95c37caca9ef93e6612370976e9a93bca75",
+    # The same, with a real home directory in the file-path example. Only the
+    # example changed, but a config written before this keeps the old text
+    # forever without a line here.
+    "1311eda7ef5ba5e274d4ccab8528abe03a2c0cbdaa36cd64ed8ff01ef9dd6753",
 })
 
 

@@ -120,7 +120,7 @@ PARAMETERS: list[dict[str, Any]] = [
         "name": "ref_audio",
         "type": "file upload (multipart only)",
         "default": None,
-        "example": "@reference_zh.wav",
+        "example": "@my-reference.wav",
         "doc": "Reference recording to clone the speaker from. A few seconds "
                "of clean speech is enough, and it may be in a different "
                "language than 'text' -- cross-lingual cloning works. Requires "
@@ -130,7 +130,10 @@ PARAMETERS: list[dict[str, Any]] = [
         "name": "ref_audio_path",
         "type": "string",
         "default": None,
-        "example": "/Users/thomas/Documents/BreezeTTS2/reference_zh.wav",
+        # Built for whichever machine is answering: this is documentation a
+        # user copies, and a path in the wrong shape for their system is worse
+        # than no example at all.
+        "example": str(Path.home() / "recordings" / "my-reference.wav"),
         "doc": "Alternative to uploading: an absolute path the SERVER can "
                "read. Handy for JSON requests and for large files you do not "
                "want to send over the wire. Requires ref_text.",

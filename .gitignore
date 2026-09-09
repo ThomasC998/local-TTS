@@ -18,7 +18,10 @@ voices/
 # System-speech settings and the utterance archive: machine-local state.
 state/
 
-# Generated audio, and the log the server rewrites on every run.
+# Generated audio, and the log the server rewrites on every run. The blanket
+# *.wav is a trap worth knowing about: it will silently swallow any audio
+# fixture added to the repository later, so a test that needs one should write
+# it at run time rather than ship it -- which is what test_voice_lock.py does.
 outputs/
 server.log
 *.wav
