@@ -135,6 +135,18 @@
   select[multiple] { height: auto; min-height: 92px; }
   .swatch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
   .swatch audio { flex: 1 1 260px; margin: 0; width: auto; }
+
+  /* Microphone recorder, attached under a reference-audio file input ------ */
+  .rec { margin-top: 8px; }
+  .rec button.link { padding-left: 0; }
+  .rec-live { display: flex; align-items: center; gap: 8px; }
+  .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--live);
+             display: inline-block; animation: rec-pulse 1.1s ease-in-out infinite; }
+  @keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+  .rec-time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+  .rec-preview { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .rec-preview audio { flex: 1 1 200px; width: auto; margin: 0; height: 32px; }
+  .rec-err { color: var(--err); font-size: 12.5px; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -220,8 +232,22 @@
       <summary>Reference audio and mode</summary>
       <div class="row">
         <div>
-          <label for="refaudio">Reference audio <span class="hint">— upload</span></label>
+          <label for="refaudio">Reference audio <span class="hint">— upload or record</span></label>
           <input type="file" id="refaudio" accept="audio/*">
+          <div class="rec" id="refaudioRec" data-target="refaudio">
+            <button type="button" class="link rec-start">● Record from microphone</button>
+            <div class="rec-live" hidden>
+              <span class="rec-dot"></span><span class="rec-time">0:00</span>
+              <button type="button" class="small ghost rec-stop" style="margin-left:0">Stop</button>
+            </div>
+            <div class="rec-processing hint" hidden>Processing recording…</div>
+            <div class="rec-preview" hidden>
+              <audio controls></audio>
+              <button type="button" class="small ghost rec-redo" style="margin-left:0">Re-record</button>
+              <button type="button" class="link rec-discard">Discard</button>
+            </div>
+            <div class="rec-err hint" hidden></div>
+          </div>
         </div>
         <div>
           <label for="refpath">…or server-side path</label>
@@ -362,8 +388,22 @@
       <div id="dCloneFields" style="margin-top:16px;display:none">
         <div class="row" style="margin-top:0">
           <div>
-            <label for="dRefAudio">Recording to clone <span class="hint">— upload</span></label>
+            <label for="dRefAudio">Recording to clone <span class="hint">— upload or record</span></label>
             <input type="file" id="dRefAudio" accept="audio/*">
+            <div class="rec" id="dRefAudioRec" data-target="dRefAudio">
+              <button type="button" class="link rec-start">● Record from microphone</button>
+              <div class="rec-live" hidden>
+                <span class="rec-dot"></span><span class="rec-time">0:00</span>
+                <button type="button" class="small ghost rec-stop" style="margin-left:0">Stop</button>
+              </div>
+              <div class="rec-processing hint" hidden>Processing recording…</div>
+              <div class="rec-preview" hidden>
+                <audio controls></audio>
+                <button type="button" class="small ghost rec-redo" style="margin-left:0">Re-record</button>
+                <button type="button" class="link rec-discard">Discard</button>
+              </div>
+              <div class="rec-err hint" hidden></div>
+            </div>
           </div>
           <div>
             <label for="dRefPath">…or a path on this machine</label>
@@ -808,6 +848,175 @@ let lastUrl = null, aborter = null, currentPlayer = null;
 for (const [slider, out, fix] of [['prebuf','prebufVal',0], ['rtfmin','rtfminVal',2]]) {
   $(slider).addEventListener('input', () => $(out).textContent = (+$(slider).value).toFixed(fix));
 }
+
+/* =========================================================================
+   Microphone recording for reference-audio fields
+
+   Wraps the recorded clip as a File and assigns it to the same
+   <input type=file> the upload path already reads (via DataTransfer), so
+   every downstream fetch/multipart call needs no changes to use it. The
+   server decodes uploads with libsndfile, which knows WAV but not the
+   webm/opus or mp4/aac MediaRecorder produces — so the clip is decoded and
+   re-encoded as PCM WAV in the browser before it ever reaches the input.
+========================================================================= */
+function encodeWav(audioBuffer) {
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const numFrames = audioBuffer.length;
+  const blockAlign = numChannels * 2;
+  const dataSize = numFrames * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const writeStr = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE');
+  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true); view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data'); view.setUint32(40, dataSize, true);
+
+  const channels = [];
+  for (let c = 0; c < numChannels; c++) channels.push(audioBuffer.getChannelData(c));
+  let offset = 44;
+  for (let i = 0; i < numFrames; i++) {
+    for (let c = 0; c < numChannels; c++) {
+      const sample = Math.max(-1, Math.min(1, channels[c][i]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+async function blobToWavBlob(blob) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioCtx();
+  try {
+    const audioBuffer = await ctx.decodeAudioData(await blob.arrayBuffer());
+    return encodeWav(audioBuffer);
+  } finally {
+    ctx.close();
+  }
+}
+
+function initRecorder(container) {
+  const input = $(container.dataset.target);
+  const startBtn = container.querySelector('.rec-start');
+  const liveEl = container.querySelector('.rec-live');
+  const timeEl = container.querySelector('.rec-time');
+  const stopBtn = container.querySelector('.rec-stop');
+  const processingEl = container.querySelector('.rec-processing');
+  const previewEl = container.querySelector('.rec-preview');
+  const audioEl = previewEl.querySelector('audio');
+  const redoBtn = container.querySelector('.rec-redo');
+  const discardBtn = container.querySelector('.rec-discard');
+  const errEl = container.querySelector('.rec-err');
+
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    startBtn.disabled = true;
+    startBtn.title = 'Recording from the microphone is not supported in this browser.';
+    return;
+  }
+
+  let recorder = null, stream = null, chunks = [], startedAt = 0, timer = null;
+  let recordedUrl = null, settingFile = false;
+
+  function showErr(message) { errEl.textContent = message; errEl.hidden = false; }
+
+  function reset() {
+    startBtn.hidden = false; liveEl.hidden = true; previewEl.hidden = true;
+    processingEl.hidden = true;
+    clearInterval(timer);
+    if (recordedUrl) { URL.revokeObjectURL(recordedUrl); recordedUrl = null; }
+  }
+
+  function tick() {
+    const secs = Math.floor((Date.now() - startedAt) / 1000);
+    timeEl.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  }
+
+  async function startRecording() {
+    errEl.hidden = true;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+        showErr('Microphone permission was denied. Allow it for this page in your '
+          + "browser's site settings, or use the upload field instead.");
+      } else if (error.name === 'NotFoundError') {
+        showErr('No microphone was found.');
+      } else {
+        showErr(`Could not access the microphone: ${error.message}`);
+      }
+      return;
+    }
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
+      .find(type => MediaRecorder.isTypeSupported?.(type));
+    chunks = [];
+    try {
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    } catch (error) {
+      showErr(`Could not start recording: ${error.message}`);
+      stream.getTracks().forEach(track => track.stop());
+      stream = null;
+      return;
+    }
+    recorder.addEventListener('dataavailable', event => {
+      if (event.data.size) chunks.push(event.data);
+    });
+    recorder.addEventListener('stop', async () => {
+      stream.getTracks().forEach(track => track.stop());
+      stream = null;
+      clearInterval(timer);
+      const rawBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      liveEl.hidden = true; processingEl.hidden = false;
+      let wavBlob;
+      try {
+        wavBlob = await blobToWavBlob(rawBlob);
+      } catch (error) {
+        processingEl.hidden = true;
+        showErr(`Could not process the recording: ${error.message}`);
+        startBtn.hidden = false;
+        return;
+      }
+      const file = new File([wavBlob], 'recording.wav', { type: 'audio/wav' });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      settingFile = true;
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      settingFile = false;
+      if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+      recordedUrl = URL.createObjectURL(wavBlob);
+      audioEl.src = recordedUrl;
+      processingEl.hidden = true; previewEl.hidden = false;
+    });
+    recorder.start();
+    startedAt = Date.now();
+    startBtn.hidden = true; liveEl.hidden = false; previewEl.hidden = true;
+    timeEl.textContent = '0:00';
+    timer = setInterval(tick, 250);
+  }
+
+  startBtn.addEventListener('click', startRecording);
+  stopBtn.addEventListener('click', () => {
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+  });
+  redoBtn.addEventListener('click', () => { reset(); startRecording(); });
+  discardBtn.addEventListener('click', () => {
+    settingFile = true;
+    input.value = '';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    settingFile = false;
+    reset();
+  });
+  // A manual pick through the native file dialog should drop any stale preview.
+  input.addEventListener('change', () => { if (!settingFile) reset(); });
+}
+
+document.querySelectorAll('.rec[data-target]').forEach(initRecorder);
 
 fetch('/health').then(r => r.json()).then(h => {
   const ok = h.status === 'ok';
