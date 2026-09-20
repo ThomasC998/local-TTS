@@ -373,6 +373,18 @@ check("the new default asks for paragraphs of one idea",
 check("...and for abbreviations to be spoken",
       "by the way" in speech_config.DEFAULT_LLM_PROMPT
       and "hertz" in speech_config.DEFAULT_LLM_PROMPT)
+check("...and explains a common initialism once, keeping the short form",
+      "AI (Artificial" in speech_config.DEFAULT_LLM_PROMPT)
+import text_prep  # noqa: E402
+
+check("the web UI keeps an initialism's explanation",
+      text_prep._strip_unsupported_tags("AI (Artificial Intelligence) is here.")
+      == "AI (Artificial Intelligence) is here.")
+check("...but still strips an invented tag",
+      text_prep._strip_unsupported_tags("Hello there (excited) friend.")
+      == "Hello there friend.")
+check("...and keeps a supported vocal event",
+      text_prep._strip_unsupported_tags("Well (sigh) fine.") == "Well (sigh) fine.")
 check("...and says slashes are unsupported",
       "Slashes are NOT supported" in speech_config.DEFAULT_LLM_PROMPT)
 speech_config.CONFIG_PATH.unlink(missing_ok=True)

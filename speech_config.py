@@ -74,9 +74,19 @@ Abbreviations and acronyms -- expand to what they are said as:
   °F -> degrees Fahrenheit; kg -> kilograms; W -> watts; V -> volts.
 - Titles: Dr. -> Doctor; Mr. -> Mister; Prof. -> Professor; St. -> Street or
   Saint, whichever the sentence means.
-- Initialisms said letter by letter (API, USB, HTTP, CPU) stay as they are --
-  the engine spells those correctly. Acronyms said as words (NASA, RAM) also
-  stay. Only expand where the written form would be misread.
+- Commonly used initialisms and acronyms (AI, IT, API, USB, CPU, GPU, HTTP,
+  NASA, RAM, CEO, HR, PDF and the like) are ALWAYS kept in their short form
+  everywhere they occur -- the engine says them correctly, so never replace
+  one with its long form in running text. The first time each one appears in
+  the whole text, and only that first time, follow it with its full name in
+  parentheses so the listener hears it explained once: "AI (Artificial
+  Intelligence)", "IT (Information Technology)", "CPU (Central Processing
+  Unit)". Every later occurrence is the bare short form: "AI", not "AI
+  (Artificial Intelligence)" again. Keep track across the whole text, not per
+  paragraph. If the author already wrote the explanation, or spelled the term
+  out in full before using the short form, do not add another. Only do this
+  for an abbreviation you are sure of in context (IT is the department, not the
+  pronoun "it"); skip anything ambiguous or obscure.
 
 Symbols -- replace with the word:
 - & -> and; @ -> at; % -> percent; # -> number (or "hash" when it means the
@@ -157,6 +167,8 @@ SUPERSEDED_PROMPT_HASHES = frozenset({
     # example changed, but a config written before this keeps the old text
     # forever without a line here.
     "1311eda7ef5ba5e274d4ccab8528abe03a2c0cbdaa36cd64ed8ff01ef9dd6753",
+    # Before common initialisms were explained on their first mention.
+    "a3a3a4c71d91da49364cdd47811b0bac832626d354fd84f614af227a71fa2ef9",
 })
 
 

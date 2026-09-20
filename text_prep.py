@@ -35,6 +35,9 @@ CHINESE_EVENTS = ("笑", "咳嗽", "清嗓子", "叹气")
 
 _EN_TAG = re.compile(r"\(([^)]{1,40})\)")
 _ZH_TAG = re.compile(r"\[([^\]]{1,40})\]")
+# "AI (Artificial Intelligence)": the explanation of an initialism is content,
+# not a stage direction, so it is kept.
+_AFTER_INITIALISM = re.compile(r"\b[A-Z][A-Za-z0-9]{1,7}\s*$")
 
 SYSTEM_PROMPT = f"""You prepare raw text for a text-to-speech engine (Breeze TTS 2).
 
@@ -52,6 +55,7 @@ Hard rules:
 - NEVER invent any other tag. No (excited), no (pause), no [emphasis], no SSML, no markdown.
 - Do NOT translate. Keep the original language; use the bracket style matching that language.
 - Do NOT add, remove, or reword the substance. Only punctuation, line breaks, and tags.
+- Commonly used initialisms and acronyms (AI, IT, API, CPU, CEO and the like) always stay in their short form. The first time each one appears in the whole text, follow it with its full name in parentheses, e.g. "AI (Artificial Intelligence)"; every later occurrence is the bare short form. Skip any you are unsure of, and any the author already explained.
 - Use vocal events sparingly -- at most one per two sentences, and only where clearly warranted.
 - Return ONLY the prepared text. No preamble, no quotes, no explanation."""
 
@@ -60,7 +64,11 @@ def _strip_unsupported_tags(text: str) -> str:
     """Remove any bracketed tag the model invented outside the supported set."""
 
     def keep_en(match: re.Match[str]) -> str:
-        return match.group(0) if match.group(1).strip().lower() in ENGLISH_EVENTS else ""
+        if match.group(1).strip().lower() in ENGLISH_EVENTS:
+            return match.group(0)
+        if _AFTER_INITIALISM.search(match.string[: match.start()]):
+            return match.group(0)
+        return ""
 
     def keep_zh(match: re.Match[str]) -> str:
         return match.group(0) if match.group(1).strip() in CHINESE_EVENTS else ""
