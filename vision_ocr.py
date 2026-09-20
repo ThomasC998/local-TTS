@@ -252,16 +252,22 @@ def _macos_vision(image: bytes) -> str | None:
         )
         handler.performRequests_error_([request], None)
 
-        lines: list[tuple[float, str]] = []
+        lines: list[tuple[int, float, str]] = []
         for observation in request.results() or []:
             candidates = observation.topCandidates_(1)
             if not candidates:
                 continue
             box = observation.boundingBox()
-            # Vision's origin is bottom-left, so a larger y is higher up.
-            lines.append((-box.origin.y, candidates[0].string()))
-        lines.sort(key=lambda item: item[0])
-        return "\n".join(text for _, text in lines).strip()
+            # Vision reports each run of text with its own box, in no
+            # particular order, with the origin at the bottom left -- so a
+            # larger y is further up the page. Sorting by y alone puts two
+            # things on the same line in whichever order they were found,
+            # which is how "9:41" ends up after the battery icon. Rounding y
+            # into bands first makes a line a line, and then x reads it.
+            row = int(round((1.0 - box.origin.y) * 80))
+            lines.append((row, box.origin.x, candidates[0].string()))
+        lines.sort(key=lambda item: (item[0], item[1]))
+        return "\n".join(text for _, _, text in lines).strip()
     except Exception:  # noqa: BLE001 - a failed OCR is reported, not raised
         logger.exception("macOS text recognition failed")
         return None
