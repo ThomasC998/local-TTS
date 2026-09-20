@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.BreezeRead" parent="Theme.Material3.DayNight">
+        <item name="android:statusBarColor">?attr/colorSurface</item>
+    </style>
+
+    <!--
+        The three triggers all open an activity and finish immediately: the
+        selection action, the share target, and the clipboard button. Showing a
+        window for that instant would be a flash of white over whatever the
+        person was reading, so they have none.
+    -->
+    <style name="Theme.BreezeRead.Invisible" parent="Theme.BreezeRead">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+</resources>

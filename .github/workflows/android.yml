@@ -1,0 +1,71 @@
+# The phone app is built here rather than on the Mac it talks to.
+#
+# Android Studio plus an SDK plus an emulator image is ten to twenty gigabytes,
+# and the machine this project is developed on does not have them going spare.
+# GitHub's runners already have the Android SDK, so the APK is built there and
+# attached to a pre-release: the phone downloads it straight from that page.
+#
+# Nothing here signs with a release key. This is one app installed by hand on
+# one phone, so the debug key is the honest choice -- a release key would be
+# another secret to look after in exchange for nothing.
+
+name: Android app
+
+on:
+  push:
+    branches: [mobile-app]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use a JDK the Android plugin supports
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Accept the SDK licences and fetch what the build needs
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Build the APK
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+
+      - name: Keep the APK with the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: read-on-mac-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      # A release page is far easier to open on a phone than an artifact zip,
+      # which needs a signed-in browser and unzipping.
+      - name: Publish it where a phone can install it
+        if: github.ref == 'refs/heads/mobile-app'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk read-on-mac.apk
+          gh release delete phone-latest --yes --cleanup-tag || true
+          gh release create phone-latest read-on-mac.apk \
+            --prerelease \
+            --title "Read on Mac (latest build)" \
+            --notes "Built from ${{ github.sha }}. Open this page on the phone and install read-on-mac.apk."

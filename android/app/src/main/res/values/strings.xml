@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Read on Mac</string>
+    <string name="action_read">Read on Mac</string>
+    <string name="confirm_title">Check before reading</string>
+    <string name="notification_channel_transport">Playback</string>
+    <string name="notification_channel_trigger">Read button</string>
+</resources>
