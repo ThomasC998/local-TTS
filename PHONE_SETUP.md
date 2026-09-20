@@ -138,19 +138,30 @@ Phone and Mac on the same Wi-Fi. Server running.
    previous paragraph replays **instantly**, because it is already made. Lock
    the phone and try the same buttons from the lock screen.
 
-4. **The share sheet.** From any app: **Share → Read on Mac**.
+4. **The voice.** In the app, under **Voice**, pick any voice saved on the
+   Mac. Every read from this phone then asks for that one, whatever the Mac
+   itself is set to — so the phone can read in one voice while the Mac's own
+   hotkeys read in another. Leave it on *The voice the Mac is set to* and
+   nothing changes.
 
-5. **The clipboard button.** Copy some text, pull down the shade, tap **Read
+   The list comes from the Mac, so it fills in once the Mac answers; out of
+   range you still see the voice you chose. If you delete that voice on the
+   Mac, reads from this phone are refused rather than quietly read in
+   something else, and the app says so until you pick another.
+
+5. **The share sheet.** From any app: **Share → Read on Mac**.
+
+6. **The clipboard button.** Copy some text, pull down the shade, tap **Read
    the clipboard** on the ongoing *Read on Mac* notification. If you would
    rather not have a permanent notification, untick *Keep a Read the clipboard
    button in the notifications* in the app -- the other two triggers work
    without it.
 
-6. **A screenshot.** See the next section first, then: take a screenshot, crop
+7. **A screenshot.** See the next section first, then: take a screenshot, crop
    it in Android's own screenshot editor if you like, **Share → Read on Mac**.
    The text appears for a look and an edit before anything is spoken.
 
-7. **Sleep.** In the app, set **Sleep when done**, finish a read, and the Mac
+8. **Sleep.** In the app, set **Sleep when done**, finish a read, and the Mac
    sleeps two minutes later. Then wake it from the phone by starting another
    read — see the caveat below.
 

@@ -521,6 +521,10 @@ announcement so a new DHCP lease does not break anything. This Mac's own port
 is untouched -- the web UI and the hotkeys keep talking plain HTTP to
 `127.0.0.1:7860`, which the network cannot reach.
 
+The phone picks its own voice, too: any voice in the Mac's library, chosen in
+the app and asked for on every read, while this Mac's own hotkeys keep reading
+in whatever the Mac is set to.
+
 This Mac and the phone can read different things at the same time. There is one
 model in memory and the engine takes it a paragraph at a time, so the two
 interleave rather than compete, and a phone in another room does not silence
