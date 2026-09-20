@@ -68,6 +68,10 @@ OPEN_PATHS = frozenset({"/health"})
 # Addresses that are this machine talking to itself.
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
+# What a request from this Mac is called. The hotkeys, the web UI and anything
+# else running here share it: they are all the same pair of speakers.
+LOCAL_ORIGIN = {"kind": "local", "id": "mac", "name": "this Mac"}
+
 # Routes whose token may ride in the query string. Audio is fetched by the
 # media player rather than by our own HTTP client, and a player does not attach
 # headers to the URLs in a playlist.
@@ -88,7 +92,13 @@ class AuthUnavailable(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
-# The token
+# The devices, and their tokens
+#
+# One token per paired device rather than one for the installation. It costs
+# nothing and buys two things worth having: the server knows *which* device is
+# asking without being told -- the proof is which key verified, which cannot be
+# claimed falsely the way a name in a request can -- and a phone that is lost
+# can be revoked without re-pairing everything else.
 # ---------------------------------------------------------------------------
 def _write_private(path: Path, data: str) -> None:
     """Write a secret so that only this user can read it, without a window.
@@ -104,31 +114,98 @@ def _write_private(path: Path, data: str) -> None:
     os.replace(tmp, path)
 
 
-def load_token(create: bool = True) -> str | None:
-    """This installation's token, generating one the first time it is asked for."""
+def _read_store() -> list[dict[str, Any]]:
+    """Every paired device. An older single-token file is migrated on sight."""
     try:
         stored = json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
-        token = str(stored.get("token") or "")
-        if token:
-            return token
     except FileNotFoundError:
-        pass
-    except Exception:  # noqa: BLE001 - a corrupt token file is replaced, not fatal
-        logger.warning("The stored pairing token could not be read; making a new one")
-    if not create:
-        return None
-    return rotate_token()
+        return []
+    except Exception:  # noqa: BLE001 - a corrupt store is replaced, not fatal
+        logger.warning("The paired-device file could not be read; starting fresh")
+        return []
+    if isinstance(stored, dict) and stored.get("token"):
+        return [
+            {
+                "id": "device-1",
+                "name": "phone",
+                "token": str(stored["token"]),
+                "created": stored.get("created") or time.time(),
+            }
+        ]
+    devices = stored.get("devices") if isinstance(stored, dict) else None
+    return [device for device in (devices or []) if device.get("token")]
+
+
+def _write_store(devices: list[dict[str, Any]]) -> None:
+    _write_private(TOKEN_PATH, json.dumps({"devices": devices}, indent=2))
+
+
+def devices() -> list[dict[str, Any]]:
+    """The paired devices, without their tokens -- for showing on a page."""
+    return [
+        {key: device[key] for key in ("id", "name", "created") if key in device}
+        for device in _read_store()
+    ]
+
+
+def verify(token: str) -> dict[str, Any] | None:
+    """Which device this token belongs to, if any.
+
+    Every stored token is compared, and always all of them: returning early on
+    the first match would make the time taken depend on which device asked,
+    which is a small thing to leak but a free one not to.
+    """
+    found: dict[str, Any] | None = None
+    for device in _read_store():
+        if hmac.compare_digest(token, str(device.get("token") or "")):
+            found = device
+    return found
+
+
+def device_for(name: str = "phone", create: bool = True) -> dict[str, Any] | None:
+    """The device paired under this name, pairing one if there is none."""
+    for device in _read_store():
+        if device.get("name") == name:
+            return device
+    return issue_device(name) if create else None
+
+
+def issue_device(name: str = "phone") -> dict[str, Any]:
+    """Pair another device, with a token of its own."""
+    existing = _read_store()
+    device = {
+        "id": f"dev_{secrets.token_hex(6)}",
+        "name": name.strip() or "phone",
+        "token": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="),
+        "created": time.time(),
+    }
+    existing.append(device)
+    _write_store(existing)
+    logger.info("Paired a new device (%s)", device["name"])
+    return device
+
+
+def revoke_device(device_id: str) -> bool:
+    """Un-pair one device. The others carry on working."""
+    existing = _read_store()
+    remaining = [device for device in existing if device.get("id") != device_id]
+    if len(remaining) == len(existing):
+        return False
+    _write_store(remaining)
+    logger.info("Revoked device %s", device_id)
+    return True
+
+
+def load_token(create: bool = True) -> str | None:
+    """The default device's token. The single-device shorthand."""
+    device = device_for("phone", create=create)
+    return str(device["token"]) if device else None
 
 
 def rotate_token() -> str:
-    """Make a new token. Everything paired with the old one stops working."""
-    token = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
-    _write_private(
-        TOKEN_PATH,
-        json.dumps({"token": token, "created": time.time()}, indent=2),
-    )
-    logger.info("Wrote a new pairing token to %s", TOKEN_PATH)
-    return token
+    """Un-pair everything and start again with one fresh device."""
+    _write_store([])
+    return str(issue_device("phone")["token"])
 
 
 # ---------------------------------------------------------------------------
@@ -311,9 +388,8 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
     already read the token file it would be checking against.
     """
 
-    def __init__(self, app: Any, token: str) -> None:
+    def __init__(self, app: Any, token: str | None = None) -> None:
         super().__init__(app)
-        self._token = token
         self._guesses = _Guesses()
 
     async def dispatch(self, request: Any, call_next: Any) -> Any:
@@ -329,12 +405,14 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
             # against. What is checked is that the request really is local,
             # ``Host`` included, so a web page cannot point a name at 127.0.0.1
             # and have the browser make the call on its behalf.
+            request.state.origin = LOCAL_ORIGIN
             return await call_next(request)
         if self._guesses.locked(address):
             return JSONResponse({"detail": "Too many attempts"}, status_code=429)
 
         offered = self._offered(request, path)
-        if offered is None or not hmac.compare_digest(offered, self._token):
+        device = verify(offered) if offered else None
+        if device is None:
             self._guesses.wrong(address)
             return JSONResponse(
                 {"detail": "This server is paired to a device; token required"},
@@ -342,6 +420,14 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
                 headers={"WWW-Authenticate": "Bearer"},
             )
         self._guesses.right(address)
+        # Which device asked is decided here and nowhere else. It is the key
+        # that verified, not anything the request said about itself, so a
+        # device cannot ask as another one by claiming to be it.
+        request.state.origin = {
+            "kind": "device",
+            "id": device.get("id", "device"),
+            "name": device.get("name", "phone"),
+        }
         return await call_next(request)
 
     def _offered(self, request: Any, path: str) -> str | None:
@@ -356,14 +442,18 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------
 # Pairing
 # ---------------------------------------------------------------------------
-def pairing_payload(port: int, extra: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Everything the phone needs to talk to this Mac and nothing more."""
+def pairing_payload(
+    port: int, extra: dict[str, Any] | None = None, device_name: str = "phone"
+) -> dict[str, Any]:
+    """Everything one device needs to talk to this Mac and nothing more."""
+    device = device_for(device_name) or {}
     payload = {
         "v": 1,
         "host": lan_address(),
         "name": socket.gethostname().split(".")[0],
         "port": port,
-        "token": load_token(),
+        "token": device.get("token"),
+        "device_id": device.get("id"),
         "fingerprint": fingerprint(),
     }
     payload.update(extra or {})

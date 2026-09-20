@@ -147,6 +147,12 @@
   .rec-preview { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .rec-preview audio { flex: 1 1 200px; width: auto; margin: 0; height: 32px; }
   .rec-err { color: var(--err); font-size: 12.5px; margin-top: 6px; }
+
+  /* The pairing code comes back sized in millimetres, and how many depends on
+     how much it has to encode -- so it grew past the box it sits in and its
+     right-hand edge spilled off the white onto the dark card behind. The
+     viewBox is what matters; the intrinsic size is not. */
+  #phoneQr svg { width: 100%; height: auto; display: block; }
 </style>
 </head>
 <body>
@@ -872,6 +878,7 @@ It rained for six days straight, and then, on the seventh, nothing.</textarea>
         This server is bound to <b>this Mac only</b>, so the phone cannot reach it yet.
         Restart it with <code>python breeze_server.py --bind lan</code> and reload this page.
       </div>
+      <div class="hint" id="phoneDevices" style="margin-top:10px">—</div>
       <div class="row" style="margin-top:12px">
         <button type="button" class="small ghost" id="phoneRotate">Forget paired devices</button>
         <span class="msg" id="phoneMsg"></span>
@@ -2523,6 +2530,12 @@ async function loadPhone() {
       'Install the qrcode package to show a pairing code: pip install -r requirements.txt';
     $('phoneFp').textContent = (pair.fingerprint || '—').slice(0, 16) + '…';
     $('phoneMac').textContent = (pair.mac_addresses || [])[0] || 'none found';
+    // Each paired device has a key of its own, so this is a list rather than a
+    // count -- and forgetting them is a thing you do knowing what goes.
+    const devices = pair.devices || [];
+    $('phoneDevices').textContent = devices.length
+      ? `Paired: ${devices.map(d => d.name).join(', ')}`
+      : 'No device is paired yet.';
   } catch (error) { setMsg('phoneMsg', String(error), true); }
 
   try {

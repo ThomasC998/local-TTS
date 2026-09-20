@@ -124,7 +124,7 @@ def paragraph() -> dict:
     return {"audio": True}
 
 
-app.add_middleware(mobile_auth.TokenAuthMiddleware, token=rotated)
+app.add_middleware(mobile_auth.TokenAuthMiddleware)
 client = TestClient(app)
 
 check("health answers without a token, so the phone can find the Mac",
@@ -169,7 +169,7 @@ def locked_voices() -> dict:
     return {"voices": []}
 
 
-locked.add_middleware(mobile_auth.TokenAuthMiddleware, token=rotated)
+locked.add_middleware(mobile_auth.TokenAuthMiddleware)
 attacker = TestClient(locked)
 
 codes = [
@@ -183,6 +183,46 @@ check("after too many, the address is shut out entirely",
 check("and the right token does not help while it is shut out",
       attacker.get("/v1/voices",
                    headers={"Authorization": f"Bearer {rotated}"}).status_code == 429)
+
+
+# ---------------------------------------------------------------------------
+section("One key per device")
+# ---------------------------------------------------------------------------
+# Which device is asking has to be something the server works out, not
+# something a request says about itself -- so it is the key that verified.
+tablet = mobile_auth.issue_device("tablet")
+check("a second device gets a token of its own", tablet["token"] != rotated)
+check("and an id of its own", tablet["id"].startswith("dev_"))
+check("both are paired", {d["name"] for d in mobile_auth.devices()} == {"phone", "tablet"},
+      str(mobile_auth.devices()))
+check("the store never hands out the tokens with the list",
+      all("token" not in d for d in mobile_auth.devices()))
+
+check("a token names the device it belongs to",
+      (mobile_auth.verify(tablet["token"]) or {}).get("name") == "tablet")
+check("...and the other one names the other",
+      (mobile_auth.verify(rotated) or {}).get("name") == "phone")
+check("an unknown token names nobody", mobile_auth.verify("nope") is None)
+
+identified = FastAPI()
+
+
+@identified.get("/v1/reads")
+def whose() -> dict:
+    return {"seen": "whatever"}
+
+
+identified.add_middleware(mobile_auth.TokenAuthMiddleware)
+either = TestClient(identified)
+check("the tablet's token is accepted too",
+      either.get("/v1/reads",
+                 headers={"Authorization": f"Bearer {tablet['token']}"}).status_code == 200)
+
+check("revoking one device leaves the other working", mobile_auth.revoke_device(tablet["id"]))
+check("...the revoked token stops working", mobile_auth.verify(tablet["token"]) is None)
+check("...and the one that was kept still does",
+      (mobile_auth.verify(rotated) or {}).get("name") == "phone")
+check("revoking something twice says so", mobile_auth.revoke_device(tablet["id"]) is False)
 
 
 # ---------------------------------------------------------------------------

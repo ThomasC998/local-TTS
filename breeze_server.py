@@ -2493,7 +2493,14 @@ def speak_status() -> dict[str, Any]:
     else:
         state = {"utterance_id": None, "state": "idle", "error": None,
                  "started_at": None}
-    return {**state, "meta": meta, "playback": audio_out.PLAYER.status()}
+    return {
+        **state,
+        "meta": meta,
+        "playback": audio_out.PLAYER.status(),
+        # This Mac's speakers and the phones are separate listeners sharing one
+        # model, so "what is speaking" has more than one answer at a time.
+        "reads": remote_read.READS.live(),
+    }
 
 
 @app.get("/v1/speak/clipboard")
@@ -2672,6 +2679,33 @@ def delete_system_speech_audio_export(name: str) -> dict[str, Any]:
 # than pressing keys on this machine.
 
 
+def _origin(request: Request) -> dict[str, Any]:
+    """Who is asking, decided by how they authenticated and nothing else.
+
+    On the network that is the device whose token verified; from this machine
+    it is the Mac itself. A caller never names itself -- a name in a request is
+    a claim, and the point of asking is to know rather than to be told.
+    """
+    origin = getattr(request.state, "origin", None)
+    return origin if isinstance(origin, dict) else dict(mobile_auth.LOCAL_ORIGIN)
+
+
+def _owned_read(read_id: str, request: Request) -> remote_read.RemoteRead:
+    """One read, if the caller is the one who started it.
+
+    A device may only touch its own. Now that every device has a key of its
+    own, "somebody else's read" is a thing that can exist, and a paragraph of
+    audio is the text somebody chose to listen to. A missing read and another
+    device's read answer the same way on purpose: which of the two it was is
+    not anybody else's business either.
+    """
+    read = remote_read.READS.get(read_id)
+    origin = _origin(request)
+    if read is None or (origin["kind"] != "local" and read.owner != origin["id"]):
+        raise HTTPException(404, "No such read; it may have expired")
+    return read
+
+
 def _anything_reading() -> bool:
     """Whether a read of any kind is in flight. Asked before sleeping the Mac."""
     if _active_session() is not None:
@@ -2728,13 +2762,18 @@ async def read_start(request: Request) -> dict[str, Any]:
     if not text:
         raise HTTPException(400, "Field 'text' is required")
 
-    # One engine, one listener: a read starting on the phone takes over from
-    # whatever this machine was saying, exactly as a second hotkey press does.
-    _speak_cancel("replaced")
+    # Deliberately not cancelling whatever this Mac is saying out loud. The
+    # model is one object in memory and the engine takes it a paragraph at a
+    # time, so a read here and a read on the speakers interleave rather than
+    # compete -- and a phone in another room silencing the kitchen was never
+    # what pressing play on it meant.
     mac_power.MANAGER.cancel_sleep()
 
+    origin = _origin(request)
     prepared = await run_in_threadpool(_prepare_utterance, fields, text)
-    read = await run_in_threadpool(remote_read.READS.create, prepared, text)
+    read = await run_in_threadpool(
+        remote_read.READS.create, prepared, text, origin["id"]
+    )
     manifest = read.manifest()
     return {
         "action": "reading",
@@ -2751,16 +2790,16 @@ async def read_start(request: Request) -> dict[str, Any]:
 
 
 @app.get("/v1/read/{read_id}/manifest")
-def read_manifest(read_id: str) -> dict[str, Any]:
+def read_manifest(read_id: str, request: Request) -> dict[str, Any]:
     """How far the read has got: how many paragraphs, which are ready to play."""
-    read = remote_read.READS.get(read_id)
-    if read is None:
-        raise HTTPException(404, "No such read; it may have expired")
+    read = _owned_read(read_id, request)
     return {**read.manifest(), "preview": read.preview(read.manifest()["position"])}
 
 
 @app.get("/v1/read/{read_id}/p{index}.wav")
-def read_paragraph(read_id: str, index: int, wait: int = 0) -> StreamingResponse:
+def read_paragraph(
+    read_id: str, index: int, request: Request, wait: int = 0
+) -> StreamingResponse:
     """One paragraph, as a WAV. Asking for it is also how the phone says where it is.
 
     ``wait=1`` holds the response until the paragraph is finished, so it goes
@@ -2768,9 +2807,7 @@ def read_paragraph(read_id: str, index: int, wait: int = 0) -> StreamingResponse
     it. Without it the audio streams as it is made, which starts sooner and is
     what a plain playlist wants.
     """
-    read = remote_read.READS.get(read_id)
-    if read is None:
-        raise HTTPException(404, "No such read; it may have expired")
+    read = _owned_read(read_id, request)
     if not read.exists(index):
         raise HTTPException(404, f"This read has no paragraph {index}")
     headers, body = read.paragraph(index, wait=bool(wait))
@@ -2780,9 +2817,7 @@ def read_paragraph(read_id: str, index: int, wait: int = 0) -> StreamingResponse
 @app.get("/v1/read/{read_id}/playlist.m3u")
 def read_playlist(read_id: str, request: Request) -> Response:
     """The whole read as a playlist, for any audio player that is not the app."""
-    read = remote_read.READS.get(read_id)
-    if read is None:
-        raise HTTPException(404, "No such read; it may have expired")
+    read = _owned_read(read_id, request)
     base = str(request.base_url).rstrip("/")
     token = request.query_params.get("t")
     return Response(
@@ -2793,16 +2828,22 @@ def read_playlist(read_id: str, request: Request) -> Response:
 
 
 @app.delete("/v1/read/{read_id}")
-def read_stop(read_id: str) -> dict[str, Any]:
+def read_stop(read_id: str, request: Request) -> dict[str, Any]:
     """Finish with a read and give its audio back."""
+    _owned_read(read_id, request)
     dropped = remote_read.READS.drop(read_id, "finished")
     mac_power.MANAGER.arm_sleep()
     return {"closed": dropped, "read_id": read_id}
 
 
 @app.get("/v1/reads")
-def read_list() -> dict[str, Any]:
-    return {"reads": remote_read.READS.live()}
+def read_list(request: Request) -> dict[str, Any]:
+    """What is being read, and by whom. A device sees only its own."""
+    origin = _origin(request)
+    reads = remote_read.READS.live()
+    if origin["kind"] != "local":
+        reads = [read for read in reads if read["owner"] == origin["id"]]
+    return {"reads": reads, "origin": origin}
 
 
 @app.post("/v1/client-log")
@@ -2891,24 +2932,39 @@ def pair(request: Request) -> dict[str, Any]:
     nothing else -- a QR code is a channel a network cannot reach.
     """
     _require_loopback(request)
+    name = (request.query_params.get("device") or "phone").strip() or "phone"
     payload = mobile_auth.pairing_payload(
         int(STATE.get("port") or 7860),
         {"mac_addresses": mac_power.mac_addresses()},
+        device_name=name,
     )
     return {
         **payload,
         "bind": STATE.get("bind") or "local",
         "qr_svg": mobile_auth.pairing_qr_svg(payload),
         "reachable": bool(payload.get("host")) and STATE.get("bind") != "local",
+        "devices": mobile_auth.devices(),
+    }
+
+
+@app.post("/v1/pair/revoke")
+async def pair_revoke(request: Request) -> dict[str, Any]:
+    """Un-pair one device. Everything else keeps working."""
+    _require_loopback(request)
+    fields, _ = await _read_params(request)
+    device_id = str(fields.get("id") or "")
+    return {
+        "revoked": mobile_auth.revoke_device(device_id),
+        "devices": mobile_auth.devices(),
     }
 
 
 @app.post("/v1/pair/rotate")
 def pair_rotate(request: Request) -> dict[str, Any]:
-    """Issue a new token. Every paired device has to be paired again."""
+    """Un-pair everything and start again. Every device has to be paired again."""
     _require_loopback(request)
     mobile_auth.rotate_token()
-    return {"rotated": True, "restart_required": True}
+    return {"rotated": True, "devices": mobile_auth.devices()}
 
 
 def _require_loopback(request: Request) -> None:
@@ -3002,8 +3058,8 @@ def main() -> None:
     if exposed:
         # Off loopback, the network is assumed hostile: nothing is served until
         # there is a token to check and a certificate the phone can pin.
-        token = mobile_auth.load_token()
-        app.add_middleware(mobile_auth.TokenAuthMiddleware, token=token)
+        mobile_auth.load_token()  # pairs a first device if there is none
+        app.add_middleware(mobile_auth.TokenAuthMiddleware)
         if not args.no_tls:
             certificate, key = mobile_auth.ensure_certificate()
             ssl_options = {"ssl_certfile": str(certificate), "ssl_keyfile": str(key)}

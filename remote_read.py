@@ -87,8 +87,11 @@ class RemoteRead:
     knows about HTTP, expiry and the archive.
     """
 
-    def __init__(self, prepared: dict[str, Any], text: str) -> None:
+    def __init__(
+        self, prepared: dict[str, Any], text: str, owner: str = "phone"
+    ) -> None:
         self.read_id = f"rd_{uuid.uuid4().hex[:16]}"
+        self.owner = owner
         self.text = text
         self.created_at = time.time()
         self._touched = time.monotonic()
@@ -167,6 +170,7 @@ class RemoteRead:
             "error": str(error) if error else None,
             "created_at": self.created_at,
             "sample_rate": self._tts.sample_rate,
+            "owner": self.owner,
         }
 
     def preview(self, index: int = 0, limit: int = 200) -> str:
@@ -281,11 +285,23 @@ class ReadRegistry:
         self._lock = threading.Lock()
         self._reads: dict[str, RemoteRead] = {}
 
-    def create(self, prepared: dict[str, Any], text: str) -> RemoteRead:
-        read = RemoteRead(prepared, text)
+    def create(
+        self, prepared: dict[str, Any], text: str, owner: str = "phone"
+    ) -> RemoteRead:
+        """Start a read for one device, replacing only that device's own.
+
+        A second phone, or this Mac's own speakers, is a different listener in
+        a different room: it keeps whatever it was playing. What a new read
+        replaces is the last one *the same device* asked for, which is what
+        "read this instead" means when you press it twice.
+        """
+        read = RemoteRead(prepared, text, owner=owner)
         expired: list[RemoteRead] = []
         with self._lock:
             self._sweep(expired)
+            for read_id, existing in list(self._reads.items()):
+                if existing.owner == owner:
+                    expired.append(self._reads.pop(read_id))
             while len(self._reads) >= MAX_LIVE_READS:
                 oldest = max(self._reads.values(), key=lambda item: item.idle_seconds)
                 expired.append(self._reads.pop(oldest.read_id))
@@ -294,6 +310,13 @@ class ReadRegistry:
             old.close("replaced")
         read.start()
         return read
+
+    def for_owner(self, owner: str) -> RemoteRead | None:
+        with self._lock:
+            for read in self._reads.values():
+                if read.owner == owner:
+                    return read
+        return None
 
     def get(self, read_id: str) -> RemoteRead | None:
         expired: list[RemoteRead] = []
@@ -325,6 +348,7 @@ class ReadRegistry:
         return [
             {
                 "read_id": read.read_id,
+                "owner": read.owner,
                 "created_at": read.created_at,
                 "idle_seconds": round(read.idle_seconds, 1),
                 "paragraphs": read.manifest()["paragraphs"],

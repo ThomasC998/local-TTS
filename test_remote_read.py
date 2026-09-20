@@ -273,5 +273,35 @@ check("clearing closes everything left",
 
 
 # ---------------------------------------------------------------------------
+section("Two listeners, one model")
+# ---------------------------------------------------------------------------
+# The Mac's speakers and a phone are different people in different rooms. They
+# share the engine -- one model in memory, taken a paragraph at a time -- but
+# neither silences the other, and pressing play twice on one replaces only its
+# own read.
+registry = ReadRegistry()
+engine = FakeEngine()
+mac_prepared, _ = build_read(DOC[:3], engine=engine)
+phone_read = registry.create(mac_prepared._prepared, "phone text", owner="dev_a")  # noqa: SLF001
+other, _ = build_read(DOC[:3], engine=engine)
+mac_read = registry.create(other._prepared, "mac text", owner="mac")  # noqa: SLF001
+
+check("both are alive at once", len(registry.live()) == 2, str(registry.live()))
+check("neither closed the other", not phone_read.closed and not mac_read.closed)
+check("each read knows whose it is",
+      registry.for_owner("dev_a") is phone_read
+      and registry.for_owner("mac") is mac_read)
+
+again, _ = build_read(DOC[:3], engine=engine)
+second = registry.create(again._prepared, "phone again", owner="dev_a")  # noqa: SLF001
+check("a second read from the same device replaces its own",
+      wait_until(lambda: phone_read.closed, 5.0))
+check("...and leaves the other listener alone", not mac_read.closed)
+check("...with both still live", len(registry.live()) == 2, str(registry.live()))
+check("the newest one is the device's read now", registry.for_owner("dev_a") is second)
+registry.clear("shutdown")
+
+
+# ---------------------------------------------------------------------------
 print(f"\n{PASSED} passed, {FAILED} failed\n")
 sys.exit(1 if FAILED else 0)
