@@ -530,7 +530,9 @@ paired device's key verified -- never by anything the request says about itself.
 
 Setting it up, testing it, and undoing it: **[PHONE_SETUP.md](PHONE_SETUP.md)**.
 Running the app against a simulated phone on this Mac rather than a real one:
-**[EMULATOR.md](EMULATOR.md)**.
+**[EMULATOR.md](EMULATOR.md)**. That emulator is 6.7 GB and optional --
+`android/emulator.sh` installs and removes it, and nothing needed to build or
+ship the app depends on it.
 
 Two things worth knowing before relying on it. Waking a sleeping Mac works only
 on its own network -- a sleeping machine's VPN is asleep too -- and **a MacBook

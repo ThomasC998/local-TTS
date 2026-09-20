@@ -12,6 +12,9 @@
 #     ./dev.sh crash                the last crash, if there was one
 #     ./dev.sh shutdown             stop the emulator
 #
+# The emulator itself is installed and removed by ./emulator.sh -- it is not
+# part of this checkout, and it is 6.7 GB.
+#
 # Why this exists: every trigger in this app is an Android intent, and an
 # intent can be sent from a shell. So the whole read path -- find the Mac,
 # start the read, play the paragraphs -- can be exercised and watched without
@@ -31,9 +34,48 @@ REPO="${REPO:-ThomasC998/local-TTS}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="$(dirname "$HERE")"
 
+# The emulator is not part of this checkout, and it is the one dependency here
+# that costs real disk: about 6.7 GB installed. It may well have been removed
+# on purpose (./emulator.sh remove), so "adb: command not found" or an empty
+# device list is a thing to explain rather than a thing to puzzle over.
+missing_emulator() {
+    cat >&2 <<'MSG'
+
+  The simulated phone is not installed on this Mac.
+
+      ./emulator.sh install      ~5 GB, mostly downloading
+
+  Read this before installing it: nothing else in this project needs it. The
+  APK is built in CI, and the JVM tests in android/app/src/test/ run in a
+  couple of seconds with no device at all. The emulator is only for watching
+  the app really fetch and play a read.
+
+  If you are an agent asked to test the app end to end, this is the step you
+  are missing -- install it, or say that you cannot test it without 6.7 GB of
+  someone else's disk and let them decide.
+
+  A real phone plugged in over USB works instead, with no emulator at all.
+
+MSG
+    exit 1
+}
+
+have_emulator() { [ -x "$ANDROID_HOME/emulator/emulator" ]; }
+
+# Most of these commands drive whatever is attached: emulator or real phone.
+need_device() {
+    command -v adb >/dev/null 2>&1 || missing_emulator
+    adb shell true >/dev/null 2>&1 && return 0
+    have_emulator || missing_emulator
+    echo "No phone attached. ./dev.sh boot starts the simulated one." >&2
+    exit 1
+}
+
+
 case "${1:-}" in
 
 boot)
+    have_emulator || missing_emulator
     if adb shell true 2>/dev/null; then
         echo "A device is already attached."; exit 0
     fi
@@ -49,6 +91,7 @@ boot)
     ;;
 
 install)
+    need_device
     cd "${TMPDIR:-/tmp}"
     gh release download phone-latest --repo "$REPO" --pattern 'read-on-mac.apk' --clobber
     # Each CI run signs with a debug key of its own, so a build from a later run
@@ -65,6 +108,7 @@ install)
     ;;
 
 pair)
+    need_device
     # The pairing code is meant to be photographed, and an emulator's camera
     # cannot photograph the Mac's screen. A debug build lets its own data
     # directory be written through run-as, so the same values go in directly.
@@ -111,6 +155,7 @@ PY
     ;;
 
 read)
+    need_device
     text="${2:?usage: ./dev.sh read \"some text\"}"
     adb logcat -c
     # Quoted twice on purpose: once for this shell, once for the device's.
@@ -120,22 +165,23 @@ read)
     echo "Started. ./dev.sh logs to watch it."
     ;;
 
-next)    adb shell input keyevent KEYCODE_MEDIA_NEXT ;;
-prev)    adb shell input keyevent KEYCODE_MEDIA_PREVIOUS ;;
-pause)   adb shell input keyevent KEYCODE_MEDIA_PLAY_PAUSE ;;
-stop)    adb shell am force-stop "$APP" ;;
+next)    need_device; adb shell input keyevent KEYCODE_MEDIA_NEXT ;;
+prev)    need_device; adb shell input keyevent KEYCODE_MEDIA_PREVIOUS ;;
+pause)   need_device; adb shell input keyevent KEYCODE_MEDIA_PLAY_PAUSE ;;
+stop)    need_device; adb shell am force-stop "$APP" ;;
 
 logs)
+    need_device
     # Everything the app's own process says, which includes the exceptions it
     # swallows into toasts -- the equivalent of a browser console for it.
     pid="$(adb shell pidof "$APP" 2>/dev/null | tr -d '\r')"
     if [ -n "$pid" ]; then adb logcat --pid="$pid"; else adb logcat -s BreezeRead:V BreezeWake:V BreezeDiscovery:V AndroidRuntime:E; fi
     ;;
 
-crash)   adb logcat -d -b crash | tail -40 ;;
+crash)   need_device; adb logcat -d -b crash | tail -40 ;;
 
 shutdown)
-    adb emu kill 2>/dev/null || pkill -f qemu-system || true
+    command -v adb >/dev/null 2>&1 && adb emu kill 2>/dev/null || pkill -f qemu-system || true
     echo "Emulator stopped."
     ;;
 

@@ -6,7 +6,7 @@ Three separate problems, three different answers. Only the third one is heavy.
 |---|---|---|
 | read error logs while something runs | `adb logcat` | 37 MB |
 | check logic on every push | `gradle test` in CI | nothing local |
-| click around a phone on the Mac | the emulator | 5.1 GB |
+| click around a phone on the Mac | the emulator | 6.7 GB, `./emulator.sh install` |
 
 All of it is already installed here. Nothing needs Android Studio.
 
@@ -81,6 +81,12 @@ for real UI flows.
 
 ## 4. The emulator, for clicking around
 
+**Not installed by default, and removable.** `./emulator.sh install` puts it
+on this Mac, `./emulator.sh remove` takes it off and gives the disk back, and
+`./emulator.sh status` says which it is. `dev.sh` refuses with an explanation
+rather than a stack trace when it is missing. Everything above this line — the
+APK, the JVM tests — works without it.
+
 Installed via the command-line tools only — no Android Studio:
 
 ```
@@ -91,6 +97,10 @@ system-images;android-35     3.8 GB   ← the big one
 platform-tools                37 MB
                              ─────
                              5.1 GB
+
+plus the device itself        1.6 GB   ~/.android/avd/phone.avd
+                             ─────
+                             6.7 GB
 ```
 
 ```bash

@@ -1,7 +1,17 @@
 # Running the phone app on the Mac
 
 A simulated phone on this machine, with the app on it, talking to the server
-here. Everything is already installed; this is how to use it.
+here. This is how to use it.
+
+> **It may not be installed.** The emulator is 6.7 GB and is not part of this
+> checkout, so a fresh Mac will not have it and this one may have had it
+> removed on purpose. `./emulator.sh status` says; `./emulator.sh install`
+> puts it there; `./emulator.sh remove` takes it away again.
+>
+> Nothing else here needs it. The APK is built in CI and the JVM tests run in
+> seconds with no device. The emulator is only for watching the app really
+> fetch and play a read — worth it for that, and not worth it for anything
+> else.
 
 There is no QR code in this flow — see [Pairing without a camera](#3-pairing-without-a-camera).
 
@@ -126,6 +136,7 @@ already known. The phone's port is the other one.
 | An intent loses everything after the first word | The value needs quoting **twice** — once for your shell, once for the device's. `./dev.sh read` does this for you. |
 | The app says it cannot find the Mac | The server must be started with `--bind lan`, which adds the device listener on 7861. Without it there is nothing on the network to find. |
 | `./dev.sh pair` fails | Either the server is not running, or the APK is a release build (`run-as` is refused). |
+| `The simulated phone is not installed` | What it says: `./emulator.sh install`. |
 
 The emulator reaches your Mac's LAN address normally, the same as a real phone.
 (`10.0.2.2` is the host's *loopback*, if you ever need that instead.)
