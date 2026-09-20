@@ -63,6 +63,32 @@ class Settings(context: Context) {
         get() = prefs.getString(REMOTE, "") ?: ""
         set(value) = prefs.edit().putString(REMOTE, value.trim()).apply()
 
+    /**
+     * A voice on the Mac to read in, instead of the one the Mac is set to.
+     *
+     * Empty means "whatever the Mac would have chosen", which is what this
+     * phone asked for before the setting existed and is still the default. The
+     * id is what the Mac understands; the name is kept beside it only so the
+     * screen can say which voice is chosen without asking the Mac first --
+     * useful precisely when the Mac is not answering.
+     *
+     * A voice deleted on the Mac leaves an id here that no longer resolves.
+     * The Mac refuses that read rather than quietly reading in another voice,
+     * and the settings screen says so the next time it manages to ask.
+     */
+    var voiceId: String
+        get() = prefs.getString(VOICE, "") ?: ""
+        set(value) = prefs.edit().putString(VOICE, value.trim()).apply()
+
+    var voiceName: String
+        get() = prefs.getString(VOICE_NAME, "") ?: ""
+        set(value) = prefs.edit().putString(VOICE_NAME, value).apply()
+
+    /** Forget the chosen voice and go back to the Mac's own. */
+    fun clearVoice() {
+        prefs.edit().remove(VOICE).remove(VOICE_NAME).apply()
+    }
+
     var useLlm: Boolean
         get() = prefs.getBoolean(LLM, false)
         set(value) = prefs.edit().putBoolean(LLM, value).apply()
@@ -112,6 +138,8 @@ class Settings(context: Context) {
         const val MACS = "macs"
         const val LAST_HOST = "lastGoodHost"
         const val REMOTE = "remoteHost"
+        const val VOICE = "voiceId"
+        const val VOICE_NAME = "voiceName"
         const val LLM = "useLlm"
         const val CONFIRM = "confirmScreenshots"
         const val NOTIFY = "showNotification"

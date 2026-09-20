@@ -2,6 +2,7 @@ package com.breezetts.read
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -139,5 +140,35 @@ class ParagraphUrlTest {
     fun `the token is there because a media player sends no headers`() {
         val url = Server.paragraphUrl("https://h:1", "rd", 0, "secret")
         assertTrue(url.contains("t=secret"))
+    }
+}
+
+/**
+ * Asking for a particular voice.
+ *
+ * The distinction that matters is between saying nothing about the voice and
+ * saying something empty. Nothing means the Mac decides, which is what this
+ * phone did before the setting existed and what it still does by default.
+ */
+class ReadPayloadTest {
+
+    @Test
+    fun `no chosen voice means the field is absent, not empty`() {
+        val payload = Server.readPayload("hello", useLlm = false, voiceId = "")
+        assertFalse(payload.has("voice_id"))
+        assertEquals("hello", payload.getString("text"))
+        assertEquals(false, payload.getBoolean("llm"))
+    }
+
+    @Test
+    fun `a chosen voice is asked for by id`() {
+        val payload = Server.readPayload("hello", useLlm = true, voiceId = "voice_abc")
+        assertEquals("voice_abc", payload.getString("voice_id"))
+        assertEquals(true, payload.getBoolean("llm"))
+    }
+
+    @Test
+    fun `whitespace is not a voice`() {
+        assertFalse(Server.readPayload("x", false, "   ").has("voice_id"))
     }
 }

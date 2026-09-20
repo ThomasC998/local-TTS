@@ -36,6 +36,7 @@ class MainActivity : AppCompatActivity() {
 
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var settings: Settings
+    private var voices: List<Server.Voice> = emptyList()
 
     private val scanner = registerForActivityResult(ScanContract()) { result ->
         val contents = result?.contents
@@ -101,6 +102,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         setUpPowerModes()
+        showVoices()
         refresh()
     }
 
@@ -113,6 +115,89 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         worker.shutdownNow()
         super.onDestroy()
+    }
+
+    // -- the voice --------------------------------------------------------
+    /**
+     * Which of the Mac's voices to read in.
+     *
+     * The list lives on the Mac, so this screen has to ask for it, and asking
+     * can fail -- the Mac may be asleep, or on another network. So the spinner
+     * is drawn from whatever is known right now: the saved choice on its own
+     * if that is all there is, and the full library once it arrives. Opening
+     * this screen out of range shows the voice you picked rather than an empty
+     * list that looks like the setting was lost.
+     */
+    private fun showVoices(loaded: List<Server.Voice>? = null) {
+        if (loaded != null) voices = loaded
+        val chosen = settings.voiceId
+        val known = voices.map { it.id }
+
+        // A voice chosen on this phone but no longer on the Mac stays in the
+        // list until it is changed. Dropping it silently would look like the
+        // phone had forgotten it, and the Mac will refuse that read anyway.
+        val missing = chosen.isNotBlank() && voices.isNotEmpty() && chosen !in known
+        val extra = if (missing || (chosen.isNotBlank() && voices.isEmpty())) {
+            listOf(Server.Voice(chosen, settings.voiceName.ifBlank { chosen }))
+        } else {
+            emptyList()
+        }
+        val options = extra + voices
+        val labels = listOf(MAC_CHOOSES) + options.map { it.name }
+
+        val spinner = findViewById<Spinner>(R.id.voice)
+        spinner.onItemSelectedListener = null  // redrawing is not a choice
+        spinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_dropdown_item, labels
+        )
+        val at = options.indexOfFirst { it.id == chosen }
+        spinner.setSelection(if (chosen.isBlank() || at < 0) 0 else at + 1)
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            override fun onItemSelected(
+                parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long,
+            ) {
+                // A spinner reports a selection when it first lays itself out,
+                // and that report is the one the setSelection above asked for.
+                // Without this the act of showing the screen would hand the
+                // saved voice back to the Mac.
+                val picked = if (position == 0) "" else options[position - 1].id
+                if (picked == settings.voiceId) return
+                if (picked.isBlank()) {
+                    settings.clearVoice()
+                } else {
+                    settings.voiceId = picked
+                    settings.voiceName = options[position - 1].name
+                }
+                describeVoice(missingOnMac = false)
+            }
+        }
+        describeVoice(missingOnMac = missing)
+    }
+
+    private fun describeVoice(missingOnMac: Boolean) {
+        findViewById<TextView>(R.id.voiceState).text = when {
+            missingOnMac ->
+                "${settings.voiceName.ifBlank { settings.voiceId }} is no longer on " +
+                    "${settings.name}. Reads will be refused until you pick another."
+            settings.voiceId.isBlank() ->
+                "Reads use whatever ${settings.name} is set to."
+            else ->
+                "Every read from this phone asks for ${settings.voiceName}, " +
+                    "whatever ${settings.name} is set to."
+        }
+    }
+
+    /** Ask the Mac for its voice library, quietly; the screen works without it. */
+    private fun loadVoices() {
+        if (!settings.paired) return
+        val server = Server(this, settings)
+        worker.execute {
+            val found = runCatching {
+                server.voices(server.locate(wake = false))
+            }.getOrNull() ?: return@execute
+            runOnUiThread { showVoices(found) }
+        }
     }
 
     // -- the pieces -------------------------------------------------------
@@ -166,7 +251,10 @@ class MainActivity : AppCompatActivity() {
             append("\nwake to      ").append(settings.macAddresses.firstOrNull() ?: "—")
             append("\nremote host  ").append(settings.remoteHost.ifBlank { "off" })
         }
-        if (settings.paired) check(quiet = true)
+        if (settings.paired) {
+            check(quiet = true)
+            loadVoices()
+        }
     }
 
     /** Find the Mac and report exactly what happened, which is the point. */
@@ -228,6 +316,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private companion object {
+        /** The first entry in the voice list: no instruction, the old behaviour. */
+        const val MAC_CHOOSES = "The voice the Mac is set to"
+
         val MODE_VALUES = listOf("off", "keep_on", "sleep_when_done")
         val MODE_LABELS = listOf(
             "Leave the Mac's own settings alone",

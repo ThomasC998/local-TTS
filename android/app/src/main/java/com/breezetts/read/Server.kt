@@ -42,6 +42,9 @@ class Server(context: Context, private val settings: Settings) {
         val base: String get() = "https://$host:$port"
     }
 
+    /** One of the Mac's saved voices, as far as this phone needs to know. */
+    data class Voice(val id: String, val name: String)
+
     class ServerError(message: String, val code: Int = 0) : IOException(message)
 
     private val client: OkHttpClient get() = shared(settings.fingerprint)
@@ -117,22 +120,47 @@ class Server(context: Context, private val settings: Settings) {
     }
 
     // -- asking it for things ---------------------------------------------
-    fun startRead(endpoint: Endpoint, text: String, useLlm: Boolean): JSONObject {
-        val payload = JSONObject()
-            .put("text", text)
-            .put("llm", useLlm)
-        return call(
+    /**
+     * The voices saved on the Mac, in the order a person would look for them.
+     *
+     * Only their names and ids: the Mac keeps the recordings, and a phone that
+     * only has to put a list on screen has no use for them.
+     */
+    fun voices(endpoint: Endpoint): List<Voice> {
+        val answer = call(
             Request.Builder()
-                .url("${endpoint.base}/v1/read")
-                .post(payload.toString().toRequestBody(JSON))
+                .url("${endpoint.base}/v1/voices?page_size=200&sort=name&sort_direction=asc")
                 .build()
         )
+        val listed = answer.optJSONArray("voices") ?: return emptyList()
+        return (0 until listed.length()).mapNotNull { index ->
+            val voice = listed.optJSONObject(index) ?: return@mapNotNull null
+            val id = voice.optString("voice_id")
+            if (id.isBlank()) null else Voice(id, voice.optString("name").ifBlank { id })
+        }
     }
+
+    fun startRead(endpoint: Endpoint, text: String, useLlm: Boolean): JSONObject =
+        call(
+            Request.Builder()
+                .url("${endpoint.base}/v1/read")
+                .post(
+                    readPayload(text, useLlm, settings.voiceId)
+                        .toString().toRequestBody(JSON)
+                )
+                .build()
+        )
 
     fun startReadFromImage(endpoint: Endpoint, image: ByteArray, useLlm: Boolean): JSONObject {
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("llm", useLlm.toString())
+            .also { form ->
+                // Same rule as the text path: say nothing about the voice
+                // unless this phone has actually been told to ask for one.
+                settings.voiceId.takeIf { it.isNotBlank() }
+                    ?.let { form.addFormDataPart("voice_id", it) }
+            }
             .addFormDataPart(
                 "image", "screenshot.png", image.toRequestBody("image/png".toMediaType())
             )
@@ -233,6 +261,21 @@ class Server(context: Context, private val settings: Settings) {
     }
 
     companion object {
+        /**
+         * What is asked of the Mac to start a read.
+         *
+         * ``voice_id`` is left out entirely when this phone has not chosen a
+         * voice, rather than sent as empty or null. An absent field means "you
+         * decide" to the Mac, which then uses whatever it is set to; a present
+         * one is an instruction, and the Mac refuses a read in a voice it no
+         * longer has rather than substituting another.
+         */
+        fun readPayload(text: String, useLlm: Boolean, voiceId: String): JSONObject =
+            JSONObject()
+                .put("text", text)
+                .put("llm", useLlm)
+                .also { if (voiceId.isNotBlank()) it.put("voice_id", voiceId) }
+
         /**
          * Where one paragraph lives.
          *
