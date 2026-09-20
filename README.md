@@ -183,7 +183,14 @@ difference is in a directory named for it.
 | :--- | :--- |
 | HTTP server and web UI | `breeze_server.py`, `web/index.html` |
 | Persistent engine, chunking, voice lock | `breeze_pipeline.py` |
-| Seekable read session | `speech_session.py` |
+| Paragraph engine: text, generation, audio cache | `paragraph_engine.py` |
+| Seekable read on this Mac's speakers | `speech_session.py` |
+| The same read, served to a phone | `remote_read.py` |
+| Paired devices, tokens, TLS | `mobile_auth.py` |
+| Finding this Mac on the network | `discovery.py` |
+| Screenshots to text | `vision_ocr.py` |
+| Staying awake, and sleeping again | `mac_power.py` |
+| The Android app | `android/` |
 | LLM-to-speech pipeline | `speech_pipeline.py` |
 | Local playback | `audio_out.py` |
 | Voice library | `voice_store.py` |
@@ -488,6 +495,41 @@ list is a snapshot taken when it was initialised -- a device that disconnected
 two seconds ago is still in it. Turn the behaviour off with *Pause when the
 output device changes* on the System speech tab if you would rather the audio
 follow the system.
+
+## Reading it on a phone
+
+The same engine, the same voice, the same paragraph controls -- on an Android
+phone on your own network. Select text anywhere, tap **Read on Mac**, and the
+transport buttons on the lock screen move by paragraph. The phone holds no
+model: it asks this Mac, which reads the paragraphs to it one HTTP response at
+a time.
+
+```bash
+python breeze_server.py --bind lan
+```
+
+That flag, and only that flag, puts the server on the network. With it, every
+route needs a token, the connection is TLS with a certificate the phone pins at
+pairing, and the Mac announces itself over Bonjour so a new DHCP lease does not
+break anything. Without it nothing changes: loopback only, no token, as before.
+
+This Mac and the phone can read different things at the same time. There is one
+model in memory and the engine takes it a paragraph at a time, so the two
+interleave rather than compete, and a phone in another room does not silence
+the kitchen. Which listener a request belongs to is decided by how it
+authenticated -- loopback is this Mac, and on the network it is whichever
+paired device's key verified -- never by anything the request says about itself.
+
+Setting it up, testing it, and undoing it: **[PHONE_SETUP.md](PHONE_SETUP.md)**.
+Running the app against a simulated phone on this Mac rather than a real one:
+**[EMULATOR.md](EMULATOR.md)**.
+
+Two things worth knowing before relying on it. Waking a sleeping Mac works only
+on its own network -- a sleeping machine's VPN is asleep too -- and **a MacBook
+on battery may not wake at all**, which is the hardware rather than the code.
+And a screenshot is read by a local vision model through LM Studio, which is
+asked for the article rather than the clock and the tab bar; without one
+running, macOS's own text recognition reads it accurately, clock included.
 
 ## Surviving a reboot
 
@@ -881,6 +923,8 @@ needs the checkpoint, a GPU, or a network.
 python test_voice_lock.py       # anchoring: which chunks get a reference, and why
 python test_system_speech.py    # references, rotation, and the LLM-to-speech pipeline
 python test_paragraph_skip.py   # paragraph seeking, pausing, and cleanup on abandon
+python test_remote_read.py      # the read a phone drives: one generation per paragraph
+python test_mobile_auth.py      # tokens, per-device keys, the certificate, the lockout
 python test_archive_audio.py    # sizing the archive, and exporting its audio safely
 python test_torch_parity.py     # do the two speech backends compute the same thing?
 python test_cross_platform.py   # shortcuts, providers, backends, .env parsing

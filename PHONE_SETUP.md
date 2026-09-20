@@ -135,7 +135,10 @@ Phone and Mac on the same Wi-Fi. Server running.
 4. **The share sheet.** From any app: **Share → Read on Mac**.
 
 5. **The clipboard button.** Copy some text, pull down the shade, tap **Read
-   the clipboard** on the ongoing *Read on Mac* notification.
+   the clipboard** on the ongoing *Read on Mac* notification. If you would
+   rather not have a permanent notification, untick *Keep a Read the clipboard
+   button in the notifications* in the app -- the other two triggers work
+   without it.
 
 6. **A screenshot.** See the next section first, then: take a screenshot, crop
    it in Android's own screenshot editor if you like, **Share → Read on Mac**.
