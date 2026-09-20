@@ -23,14 +23,18 @@ Then start the server so the phone can reach it:
 python breeze_server.py --bind lan
 ```
 
-What changes with `--bind lan`, and only then:
+What changes with `--bind lan`, and only then: a **second** listener appears,
+for devices, on port **7861**:
 
-- it listens on the network instead of this Mac alone
-- **every route requires a token**, generated on first run into
+- it requires a token on every route, generated on first run into
   `state/mobile_token.json` (mode `0600`, never committed)
-- it serves **HTTPS** with a self-signed certificate from `state/tls/`
+- it serves HTTPS with a self-signed certificate from `state/tls/`
 - it announces itself over Bonjour, so the phone still finds it after your
   router hands out a different address
+
+**Nothing about this Mac changes.** The web UI and the hotkeys keep talking
+plain HTTP to `127.0.0.1:7860` exactly as before, and that port is not
+reachable from the network at all.
 
 Without `--bind lan` nothing changes at all: loopback only, no token, exactly as
 before. macOS may ask once whether to let Python accept incoming connections —
@@ -98,9 +102,7 @@ workflow by hand. To build locally instead, open `android/` in Android Studio.)*
 
 ## 4. Pairing, once
 
-1. On the Mac, open <https://127.0.0.1:7860> and go to the **Phone** tab.
-   Your browser will warn about the self-signed certificate — continue; it is
-   the certificate this Mac just made for itself.
+1. On the Mac, open <http://127.0.0.1:7860> and go to the **Phone** tab.
 2. In the app, tap **Pair by scanning the Mac's code**, allow the camera, and
    scan.
 

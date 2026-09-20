@@ -117,7 +117,7 @@ curl -sk https://127.0.0.1:7860/v1/reads | python3 -m json.tool
 |---|---|
 | `Not enough space to create userdata partition` | The AVD wants 12 GB by default. Set `disk.dataPartition.size=4096M` in `~/.android/avd/phone.avd/config.ini`. |
 | An intent loses everything after the first word | The value needs quoting **twice** — once for your shell, once for the device's. `./dev.sh read` does this for you. |
-| The app says it cannot find the Mac | The server must be started with `--bind lan`. On loopback only, the emulator cannot reach it. |
+| The app says it cannot find the Mac | The server must be started with `--bind lan`, which adds the device listener on 7861. Without it there is nothing on the network to find. |
 | `./dev.sh pair` fails | Either the server is not running, or the APK is a release build (`run-as` is refused). |
 
 The emulator reaches your Mac's LAN address normally, the same as a real phone.

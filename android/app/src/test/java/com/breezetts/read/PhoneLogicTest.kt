@@ -131,7 +131,7 @@ class ParagraphUrlTest {
     fun `a paragraph carries its token and asks for a known length`() {
         val url = Server.paragraphUrl("https://192.168.0.150:7860", "rd_abc", 3, "tok")
         assertEquals(
-            "https://192.168.0.150:7860/v1/read/rd_abc/p3.wav?wait=1&t=tok", url
+            "https://192.168.0.150:7860/v1/read/rd_abc/p3.wav?wait=2&t=tok", url
         )
     }
 

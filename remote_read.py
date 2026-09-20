@@ -55,6 +55,12 @@ IDLE_EXPIRY_SECONDS = 30 * 60
 # What is sent per chunk while a paragraph is still being generated.
 STREAM_BLOCK_SECONDS = 0.5
 
+# However long a caller asks to wait for a paragraph to be finished, this is as
+# long as it gets. A request that holds a connection open for a minute is not a
+# slow request, it is a broken one, and the phone's HTTP client gives up around
+# there anyway.
+MAX_WAIT = 8.0
+
 # The length written into the header of a paragraph that is not finished yet.
 # The convention for a WAV whose length is not known when the header goes out;
 # players read the data chunk as running to the end of the stream.
@@ -191,7 +197,7 @@ class RemoteRead:
         return self._engine.wait_for(index, threading.Event())
 
     def paragraph(
-        self, index: int, wait: bool = False
+        self, index: int, wait: float = 0.0
     ) -> tuple[dict[str, str], Iterator[bytes]]:
         """One paragraph as a WAV response: headers, then the body.
 
@@ -199,19 +205,27 @@ class RemoteRead:
         where the phone is, and only if nothing has made this paragraph is the
         engine sent to it.
 
-        ``wait`` trades the first second or two of a paragraph nobody has made
-        yet for a response that knows its own length. A player handed audio of
-        unknown length has to guess at the duration, and what it guesses from a
-        streamed WAV is nonsense -- so the app waits and gets a scrub bar, while
-        a plain playlist in some other player streams and starts sooner.
+        ``wait`` is how many seconds the response may be held back for the
+        paragraph to finish, and it is a small number for a reason worth
+        writing down.
+
+        A finished paragraph can be sent with its length, which is what lets a
+        player show a duration and a working scrub bar; an unfinished one
+        cannot, and what a player infers from a streamed WAV instead is
+        nonsense. So waiting is worth a moment. But only a moment: a paragraph
+        of a hundred words is half a minute of speech and takes roughly as long
+        to make, and waiting for all of it means half a minute of a phone
+        showing a spinner before it plays a word. Past the deadline the audio
+        goes out as it is made -- the engine runs faster than the speech it is
+        producing, so it stays ahead once it has started.
         """
         self.touch()
         self._engine.position = index
         with self._lock:
             self._served.add(index)
 
-        if wait and not self._engine.complete(index):
-            self._await_paragraph(index)
+        if wait > 0 and not self._engine.complete(index):
+            self._await_paragraph(index, deadline=time.monotonic() + min(wait, MAX_WAIT))
 
         if self._engine.complete(index):
             frames = self._engine.cache.frames(index)
@@ -232,19 +246,24 @@ class RemoteRead:
         }
         return headers, self._body(index, None)
 
-    def _await_paragraph(self, index: int, attempts: int = 2) -> None:
-        """Let the generator finish this paragraph, without keeping the audio.
+    def _await_paragraph(self, index: int, deadline: float) -> None:
+        """Give the generator until ``deadline`` to finish this paragraph.
 
         The blocks are read and dropped: the cache is what holds them, and the
-        point of reading is only to arrive at the end. A paragraph the engine
-        was pulled off part way through is asked for again, once.
+        point of reading is only to arrive at the end -- or at the deadline,
+        whichever comes first. Giving up is not a failure here; it only means
+        the audio goes out as a stream instead of as a file.
         """
-        stop = threading.Event()
-        for _ in range(attempts):
-            for _block in self._engine.blocks(index, stop):
-                pass
-            if self._engine.complete(index) or self._closed:
-                return
+        give_up = threading.Event()
+        timer = threading.Timer(max(0.0, deadline - time.monotonic()), give_up.set)
+        timer.daemon = True
+        timer.start()
+        try:
+            for _block in self._engine.blocks(index, give_up):
+                if give_up.is_set():
+                    return
+        finally:
+            timer.cancel()
 
     def _body(self, index: int, frames: int | None) -> Iterator[bytes]:
         rate = self._tts.sample_rate

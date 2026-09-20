@@ -508,10 +508,11 @@ a time.
 python breeze_server.py --bind lan
 ```
 
-That flag, and only that flag, puts the server on the network. With it, every
-route needs a token, the connection is TLS with a certificate the phone pins at
-pairing, and the Mac announces itself over Bonjour so a new DHCP lease does not
-break anything. Without it nothing changes: loopback only, no token, as before.
+That flag adds a **second** listener, on port 7861, for devices: a token on
+every route, TLS with a certificate the phone pins at pairing, and a Bonjour
+announcement so a new DHCP lease does not break anything. This Mac's own port
+is untouched -- the web UI and the hotkeys keep talking plain HTTP to
+`127.0.0.1:7860`, which the network cannot reach.
 
 This Mac and the phone can read different things at the same time. There is one
 model in memory and the engine takes it a paragraph at a time, so the two

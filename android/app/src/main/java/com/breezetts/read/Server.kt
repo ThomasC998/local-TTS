@@ -237,13 +237,18 @@ class Server(context: Context, private val settings: Settings) {
          * Where one paragraph lives.
          *
          * The token rides in the query string because a media player fetches
-         * these itself and attaches no headers of its own, and ``wait=1``
-         * because a player handed audio of unknown length invents a duration
-         * from it -- better to wait for the first paragraph than to show a
-         * scrub bar claiming the read is twenty-four hours long.
+         * these itself and attaches no headers of its own.
+         *
+         * The wait is two seconds, and the number matters. A paragraph the Mac
+         * has already made comes back instantly with its length, which is what
+         * gives the notification a duration and a scrub bar. One it has not
+         * takes about as long to make as it does to say -- half a minute for a
+         * long one -- so waiting for it is half a minute of a spinner. Two
+         * seconds catches everything already made and gives up on the rest,
+         * which then arrives as a stream while it is still being spoken.
          */
         fun paragraphUrl(base: String, readId: String, index: Int, token: String): String =
-            "$base/v1/read/$readId/p$index.wav?wait=1&t=$token"
+            "$base/v1/read/$readId/p$index.wav?wait=2&t=$token"
 
         private val JSON = "application/json; charset=utf-8".toMediaType()
         private const val WAKE_WAIT_MS = 20_000L

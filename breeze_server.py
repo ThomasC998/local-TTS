@@ -430,8 +430,25 @@ def _engine() -> BreezeEngine:
     return engine
 
 
+# Two uvicorn servers can share this application -- plain HTTP on loopback and
+# TLS on the network -- and each would otherwise run the lifespan, loading the
+# model twice into the same machine's memory. It is counted instead.
+_LIFESPANS = 0
+_LIFESPAN_LOCK = threading.Lock()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _LIFESPANS
+    with _LIFESPAN_LOCK:
+        _LIFESPANS += 1
+        first = _LIFESPANS == 1
+    if not first:
+        yield
+        with _LIFESPAN_LOCK:
+            _LIFESPANS -= 1
+        return
+
     voice_store.ensure_dirs()
     removed = voice_store.prune_previews()
     if removed:
@@ -454,6 +471,8 @@ async def lifespan(app: FastAPI):
     # only appears after you go looking is not a warning.
     archive.start_usage_monitor()
     yield
+    with _LIFESPAN_LOCK:
+        _LIFESPANS -= 1
     audio_out.WATCHER.stop()
     _speak_cancel("cancelled")
     # Reads hold generated audio and a running generator; the power hold is a
@@ -2798,19 +2817,21 @@ def read_manifest(read_id: str, request: Request) -> dict[str, Any]:
 
 @app.get("/v1/read/{read_id}/p{index}.wav")
 def read_paragraph(
-    read_id: str, index: int, request: Request, wait: int = 0
+    read_id: str, index: int, request: Request, wait: float = 0.0
 ) -> StreamingResponse:
     """One paragraph, as a WAV. Asking for it is also how the phone says where it is.
 
-    ``wait=1`` holds the response until the paragraph is finished, so it goes
-    out with a real length and the player can show a duration and seek inside
-    it. Without it the audio streams as it is made, which starts sooner and is
-    what a plain playlist wants.
+    ``wait`` is a number of seconds the response may be held back for the
+    paragraph to be finished, so that it can be sent with a real length and the
+    player can show a duration. It is meant to be small: a long paragraph takes
+    about as long to make as it does to say, and waiting for all of it is a
+    phone showing a spinner for half a minute. Past the deadline the audio
+    streams as it is made.
     """
     read = _owned_read(read_id, request)
     if not read.exists(index):
         raise HTTPException(404, f"This read has no paragraph {index}")
-    headers, body = read.paragraph(index, wait=bool(wait))
+    headers, body = read.paragraph(index, wait=float(wait))
     return StreamingResponse(body, media_type="audio/wav", headers=headers)
 
 
@@ -2934,7 +2955,7 @@ def pair(request: Request) -> dict[str, Any]:
     _require_loopback(request)
     name = (request.query_params.get("device") or "phone").strip() or "phone"
     payload = mobile_auth.pairing_payload(
-        int(STATE.get("port") or 7860),
+        int(STATE.get("device_port") or 7861),
         {"mac_addresses": mac_power.mac_addresses()},
         device_name=name,
     )
@@ -3021,7 +3042,10 @@ def main() -> None:
     )
     parser.add_argument("--host", default=None,
                         help="an explicit address to bind, instead of --bind")
-    parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument("--port", type=int, default=7860,
+                        help="the port this Mac's own tools use, over plain HTTP")
+    parser.add_argument("--device-port", type=int, default=7861,
+                        help="the port phones use, over TLS, when --bind is not local")
     parser.add_argument(
         "--no-tls",
         action="store_true",
@@ -3053,41 +3077,57 @@ def main() -> None:
     exposed = not address.startswith("127.") and address != "::1"
     STATE["bind"] = scope
     STATE["port"] = args.port
+    STATE["device_port"] = args.device_port
 
-    ssl_options: dict[str, Any] = {}
-    if exposed:
-        # Off loopback, the network is assumed hostile: nothing is served until
-        # there is a token to check and a certificate the phone can pin.
-        mobile_auth.load_token()  # pairs a first device if there is none
-        app.add_middleware(mobile_auth.TokenAuthMiddleware)
-        if not args.no_tls:
-            certificate, key = mobile_auth.ensure_certificate()
-            ssl_options = {"ssl_certfile": str(certificate), "ssl_keyfile": str(key)}
-        scheme = "http" if args.no_tls else "https"
-        reachable = mobile_auth.lan_address() or address
-        logger.info(
-            "Serving on %s://%s:%d -- paired devices only. "
-            "Open %s://127.0.0.1:%d on this Mac and scan the code "
-            "on the Phone panel to pair.",
-            scheme, reachable, args.port, scheme, args.port,
+    if not exposed:
+        uvicorn.run(app, host=address, port=args.port, log_level="info")
+        return
+
+    # Two listeners, on purpose. Everything on this Mac -- the web UI, the
+    # hotkey daemon, anything else -- keeps talking plain HTTP to 127.0.0.1 on
+    # the port it always used, so turning the phone on changes nothing here.
+    # The network gets its own port, and there nothing is served without a
+    # token over a certificate the phone has pinned.
+    mobile_auth.load_token()  # pairs a first device if there is none
+    app.add_middleware(mobile_auth.TokenAuthMiddleware)
+
+    if args.no_tls:
+        logger.warning(
+            "--no-tls: requests from the network to this server are readable by "
+            "anything on it. Do not pair a phone over this."
         )
-        if args.no_tls:
-            logger.warning(
-                "--no-tls: requests to this server are readable by anything on "
-                "the same network. Do not pair a phone over this."
-            )
-        else:
-            discovery.ADVERTISER.start(
-                address,
-                args.port,
-                {
-                    "fp": mobile_auth.fingerprint() or "",
-                    "name": socket.gethostname().split(".")[0],
-                    "v": "1",
-                },
-            )
+        ssl_options: dict[str, Any] = {}
+    else:
+        certificate, key = mobile_auth.ensure_certificate()
+        ssl_options = {"ssl_certfile": str(certificate), "ssl_keyfile": str(key)}
+        discovery.ADVERTISER.start(
+            mobile_auth.lan_address() or address,
+            args.device_port,
+            {
+                "fp": mobile_auth.fingerprint() or "",
+                "name": socket.gethostname().split(".")[0],
+                "v": "1",
+            },
+        )
 
-    uvicorn.run(app, host=address, port=args.port, log_level="info", **ssl_options)
+    reachable = mobile_auth.lan_address() or address
+    scheme = "http" if args.no_tls else "https"
+    logger.info(
+        "Devices: %s://%s:%d -- paired only. This Mac: http://127.0.0.1:%d, "
+        "unchanged. Open that and scan the code on the Phone panel to pair.",
+        scheme, reachable, args.device_port, args.port,
+    )
+
+    # The device listener runs beside the local one rather than replacing it.
+    # In a thread of its own because uvicorn only installs signal handlers on
+    # the main thread, which is where the listener you press ctrl-c at lives.
+    devices = uvicorn.Server(
+        uvicorn.Config(
+            app, host=address, port=args.device_port, log_level="info", **ssl_options
+        )
+    )
+    threading.Thread(target=devices.run, name="device-listener", daemon=True).start()
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
 
 
 if __name__ == "__main__":
