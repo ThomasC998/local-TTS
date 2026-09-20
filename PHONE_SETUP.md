@@ -126,11 +126,15 @@ Phone and Mac on the same Wi-Fi. Server running.
 
 2. **Selected text.** Open any web page on the phone, long-press a paragraph to
    select it, and choose **Read on Mac** from the selection toolbar (it may be
-   behind the ⋮ at the end). Audio should start within a few seconds.
+   behind the ⋮ at the end). Audio should start within a few seconds — the Mac
+   makes the first sentence first, and sends it on its own, so the wait is that
+   one sentence rather than the whole paragraph.
 
 3. **The transport.** While it plays, pull down the notification shade. Tap
    ⏭ — it waits two seconds (so holding it scrolls instead of synthesizing
-   everything on the way) and then starts the next paragraph. Tap ⏮ — the
+   everything on the way) and then starts the next paragraph. The first ⏭ lands
+   after the opening sentence, which is a paragraph of its own for the reason
+   above; after that they are the document's own paragraphs. Tap ⏮ — the
    previous paragraph replays **instantly**, because it is already made. Lock
    the phone and try the same buttons from the lock screen.
 

@@ -502,7 +502,14 @@ The same engine, the same voice, the same paragraph controls -- on an Android
 phone on your own network. Select text anywhere, tap **Read on Mac**, and the
 transport buttons on the lock screen move by paragraph. The phone holds no
 model: it asks this Mac, which reads the paragraphs to it one HTTP response at
-a time.
+a time, each one finished before it is sent so the player knows how long it is.
+
+That is why the first sentence gets a paragraph of its own. Every other
+paragraph is made while an earlier one is being spoken and is waiting by the
+time it is asked for; the first has nothing in front of it, so the phone waits
+out however long it takes to make. One sentence is a few seconds. A hundred
+words would be half a minute of looking at a spinner. The cost is one extra
+stop for the skip button, at the end of the first sentence.
 
 ```bash
 python breeze_server.py --bind lan
