@@ -30,7 +30,7 @@ os.environ["BREEZE_STATE_DIR"] = str(Path(_TEMP) / "state")
 import archive  # noqa: E402
 import audio_out  # noqa: E402
 import speech_session  # noqa: E402
-from speech_session import ParagraphBook, SpeechSession  # noqa: E402
+from speech_session import AudioCache, ParagraphBook, SpeechSession  # noqa: E402
 
 PASSED = 0
 FAILED = 0
@@ -50,11 +50,28 @@ def section(title: str) -> None:
     print(f"\n{title}\n{'-' * len(title)}")
 
 
+def wait_until(predicate, timeout: float = 5.0) -> bool:
+    """Poll rather than sleep a fixed time: three threads set their own pace."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
 # ---------------------------------------------------------------------------
 # Stand-ins
 # ---------------------------------------------------------------------------
 class FakePlayer:
-    """Records what would have been played. Opens nothing."""
+    """Records what would have been played, and drains in real time. Opens nothing.
+
+    The draining matters. The session keeps its queue short on purpose, because
+    cached audio is handed over as fast as the player will take it and a player
+    that swallows a paragraph whole would leave the session believing it was
+    already at the end of something the listener has not started. A fake that
+    always reports an empty queue would hide exactly that.
+    """
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -63,17 +80,31 @@ class FakePlayer:
         self.starts = 0
         self.stops = 0
         self.finished = 0
+        self.rate = 24000
+        self._queued = 0.0
+        self._at = time.monotonic()
+
+    def _drain(self) -> None:
+        now = time.monotonic()
+        self._queued = max(0.0, self._queued - (now - self._at))
+        self._at = now
 
     def start(self, utterance_id, sample_rate, prebuffer_ms=400, device=None):
         with self.lock:
             self.utterance = utterance_id
             self.starts += 1
+            self.rate = int(sample_rate) or 24000
+            self._queued = 0.0
+            self._at = time.monotonic()
 
     def write(self, utterance_id, audio):
         with self.lock:
             if self.utterance != utterance_id:
                 return False
-            self.frames += int(np.asarray(audio).size)
+            self._drain()
+            size = int(np.asarray(audio).size)
+            self.frames += size
+            self._queued += size / float(self.rate)
             return True
 
     def finish(self, utterance_id):
@@ -89,13 +120,17 @@ class FakePlayer:
                 return
             self.utterance = None
             self.stops += 1
+            self._queued = 0.0
+            self._at = time.monotonic()
 
     def is_playing(self):
         with self.lock:
             return self.utterance is not None
 
     def status(self):
-        return {}
+        with self.lock:
+            self._drain()
+            return {"buffered_seconds": round(self._queued, 3)}
 
 
 class FakeEngine:
@@ -108,14 +143,19 @@ class FakeEngine:
 
     sample_rate = 24000
 
-    def __init__(self, delay: float = 0.02) -> None:
+    def __init__(self, delay: float = 0.02, frames: int = 1024) -> None:
         self.delay = delay
+        self.frames = frames
         self.pause_buffer = np.zeros(64, dtype=np.float32)
         self.paragraph_pause_buffer = np.zeros(256, dtype=np.float32)
         self.requests: list[str] = []
         self.closed: list[str] = []
         self.open_generations = 0
         self._lock = threading.Lock()
+
+    def paragraphs(self) -> list[str]:
+        """The paragraph each generation was for, in the order they ran."""
+        return [request.rsplit("-p", 1)[1] for request in self.requests]
 
     def stream_live(self, source, *, request_id="live", **options):
         with self._lock:
@@ -126,7 +166,7 @@ class FakeEngine:
                 if index:
                     yield "audio", self.pause_buffer, index
                 time.sleep(self.delay)
-                yield "audio", np.zeros(1024, dtype=np.float32), index
+                yield "audio", np.zeros(self.frames, dtype=np.float32), index
                 yield "boundary", None, index
         finally:
             with self._lock:
@@ -175,6 +215,8 @@ DOC = [
     ["Paragraph five."],
 ]
 
+LONG_DOC = [[f"Paragraph {number}, its only sentence."] for number in range(12)]
+
 
 # ---------------------------------------------------------------------------
 section("The book")
@@ -207,6 +249,75 @@ started = time.monotonic()
 seen = list(growing.chunks(0, stop))
 check("a reader blocks for a chunk still being written", seen == ["late chunk"], str(seen))
 check("and stops when the writer finishes", time.monotonic() - started < 2.0)
+
+
+# ---------------------------------------------------------------------------
+section("The audio cache")
+# ---------------------------------------------------------------------------
+cache = AudioCache()
+cache.begin(0)
+cache.append(0, np.ones(100, dtype=np.float32))
+check("a paragraph being made is live", cache.live(0) and not cache.complete(0))
+cache.append(0, np.full(50, 0.5, dtype=np.float32))
+cache.finish(0)
+check("a finished paragraph is complete", cache.complete(0))
+stop = threading.Event()
+replay = [block.size for block in cache.blocks(0, stop)]
+check("it replays every block it was given", replay == [100, 50], str(replay))
+check("and again, as many times as asked",
+      [block.size for block in cache.blocks(0, stop)] == [100, 50])
+check("it knows what it holds", cache.cached() == [0], str(cache.cached()))
+
+# The case a skip forwards lands in: a reader on a paragraph the engine is only
+# part way through has to start now and keep up, not wait for the end.
+cache.begin(1)
+cache.append(1, np.zeros(10, dtype=np.float32))
+seen: list[int] = []
+
+
+def late_generator() -> None:
+    time.sleep(0.15)
+    cache.append(1, np.zeros(20, dtype=np.float32))
+    time.sleep(0.15)
+    cache.finish(1)
+
+
+threading.Thread(target=late_generator, daemon=True).start()
+started = time.monotonic()
+seen = [block.size for block in cache.blocks(1, stop)]
+check("a reader picks up blocks still being generated", seen == [10, 20], str(seen))
+check("and ends when the generator does", time.monotonic() - started < 2.0)
+
+cache.begin(2)
+cache.append(2, np.zeros(30, dtype=np.float32))
+cache.abandon(2)
+check("an abandoned paragraph is not live", not cache.live(2) and not cache.complete(2))
+cache.discard(2)
+check("and its half a paragraph is dropped", cache.state(2) is None)
+
+failing = AudioCache()
+failing.begin(0)
+failing.fail(0, RuntimeError("engine fell over"))
+try:
+    list(failing.blocks(0, stop))
+    raised = False
+except RuntimeError:
+    raised = True
+check("a generator's failure is raised at the reader", raised)
+
+tight = AudioCache(budget_bytes=4 * 100 * 4)  # four blocks of a hundred floats
+for index in range(6):
+    tight.begin(index)
+    tight.append(index, np.zeros(100, dtype=np.float32))
+    tight.finish(index)
+    tight.trim(5)
+kept = tight.cached()
+check("over budget, the paragraphs furthest from the ear go first",
+      5 in kept and 0 not in kept, str(kept))
+check("and it stays inside its budget", tight.size_bytes <= 4 * 100 * 4,
+      str(tight.size_bytes))
+tight.clear()
+check("clearing empties it", tight.cached() == [] and tight.size_bytes == 0)
 
 
 # ---------------------------------------------------------------------------
@@ -248,12 +359,34 @@ check("the state says it is seeking", status["state"] == "seeking", status["stat
 check("the sound stopped at the first press", player.utterance is None)
 
 session.wait(20.0)
-generated = [request.rsplit("-p", 1)[1] for request in engine.requests]
-check("the paragraphs passed over were never generated",
-      generated == ["0", "3", "4"], str(generated))
+check("every paragraph was reached", set(engine.paragraphs()) == {"0", "1", "2", "3", "4"},
+      str(engine.paragraphs()))
+check("and none of them was generated twice",
+      len(engine.requests) == len(set(engine.requests)), str(engine.paragraphs()))
 check("every abandoned generation was closed",
       len(engine.closed) == len(engine.requests) and engine.open_generations == 0,
       f"{len(engine.closed)} closed of {len(engine.requests)}")
+
+# A skip the engine cannot already have covered is the case that still has to
+# generate: the paragraphs between here and there are never made at all.
+player = FakePlayer()
+audio_out.PLAYER = player
+speech_session.audio_out.PLAYER = player
+
+session, engine = build_session(LONG_DOC, debounce=0.3,
+                                engine=FakeEngine(delay=0.25, frames=24000))
+session.start()
+time.sleep(0.1)
+session.skip(9)
+time.sleep(0.8)
+reached = engine.paragraphs()
+check("a skip past what is generated lands on a fresh generation",
+      "9" in reached, str(reached))
+check("and the paragraphs jumped over are never made",
+      not ({"5", "6", "7", "8"} & set(reached)), str(reached))
+session.cancel()
+session.wait(10.0)
+check("nothing is left open after a long skip", engine.open_generations == 0)
 
 
 # ---------------------------------------------------------------------------
@@ -263,20 +396,33 @@ player = FakePlayer()
 audio_out.PLAYER = player
 speech_session.audio_out.PLAYER = player
 
-session, engine = build_session(DOC, debounce=0.2, engine=FakeEngine(delay=0.4))
+session, engine = build_session(LONG_DOC, debounce=0.2,
+                                engine=FakeEngine(delay=0.05, frames=24000))
 session.start()
-time.sleep(1.4)  # a couple of paragraphs in
-before = session.status()["paragraph"]
-session.skip(-1)
-time.sleep(0.5)
-after = session.status()["paragraph"]
-check("a back press lands on an earlier paragraph", after < before or after == before - 1,
-      f"{before} -> {after}")
+check("the read gets a couple of paragraphs in",
+      wait_until(lambda: session.status()["paragraph"] >= 2, 10.0),
+      str(session.status()))
+
+# The press's own reply is what says where it aimed: read the position
+# separately and playback may have moved on between the two.
+before = session.skip(-1)
+target = before["paragraph_target"]
+check("a back press aims one paragraph earlier",
+      target == before["paragraph"] - 1, f"{before['paragraph']} -> {target}")
+check("and lands there",
+      wait_until(lambda: session.status()["paragraph"] <= target, 5.0),
+      f"{target} vs {session.status()['paragraph']}")
+after = session.status()
+check("the paragraph gone back to is replayed, not made again",
+      len(engine.requests) == len(set(engine.requests)), str(engine.paragraphs()))
+check("and the engine carries on from where it was",
+      after["paragraph_generating"] >= before["paragraph_generating"],
+      f"{before['paragraph_generating']} -> {after['paragraph_generating']}")
 session.cancel()
 session.wait(10.0)
-check("a paragraph already spoken can be generated again",
-      len(engine.requests) > len(set(engine.requests)) or after < before,
-      str(engine.requests))
+check("no paragraph was ever generated twice",
+      len(engine.requests) == len(set(engine.requests)), str(engine.paragraphs()))
+check("nothing is left open", engine.open_generations == 0)
 
 session, engine = build_session(DOC, debounce=0.1)
 session.start()
@@ -288,6 +434,53 @@ check("back presses clamp at the first paragraph",
       str(session.status()["paragraph_target"]))
 session.cancel()
 session.wait(10.0)
+
+
+# ---------------------------------------------------------------------------
+section("Landing on audio that already exists")
+# ---------------------------------------------------------------------------
+player = FakePlayer()
+audio_out.PLAYER = player
+speech_session.audio_out.PLAYER = player
+
+# An engine well ahead of the speaker, which is the ordinary case: a paragraph
+# takes far less to make than to say.
+session, engine = build_session(LONG_DOC, debounce=0.2,
+                                engine=FakeEngine(delay=0.05, frames=36000))
+session.start()
+check("the engine runs in front of the ear",
+      wait_until(lambda: session.status()["paragraph_generating"] >= 2, 8.0),
+      str(session.status()))
+check("but not indefinitely far in front",
+      session.status()["paragraph_generating"]
+      <= session.status()["paragraph"] + speech_session.GENERATE_AHEAD_PARAGRAPHS + 1,
+      str(session.status()))
+check("what it made is kept", session.status()["paragraphs_cached"] >= 2,
+      str(session.status()))
+
+before = session.status()
+session.skip(1)
+check("a skip onto generated audio starts playing it",
+      wait_until(lambda: session.status()["paragraph"] == before["paragraph"] + 1, 5.0),
+      f"{before['paragraph']} -> {session.status()['paragraph']}")
+check("without generating the paragraph a second time",
+      len(engine.requests) == len(set(engine.requests)), str(engine.paragraphs()))
+check("and the engine was never sent back to where the ear is",
+      session.status()["paragraph_generating"] >= before["paragraph_generating"],
+      f"{before['paragraph_generating']} -> "
+      f"{session.status()['paragraph_generating']}")
+
+played = player.frames
+check("the cached audio really is played",
+      wait_until(lambda: player.frames > played, 5.0), str(player.frames))
+
+session.cancel()
+session.wait(10.0)
+check("the cache goes with the session",
+      session.status()["paragraphs_cached"] == 0
+      and session._cache.size_bytes == 0,  # noqa: SLF001
+      str(session.status()["paragraphs_cached"]))
+check("nothing is left open", engine.open_generations == 0)
 
 
 # ---------------------------------------------------------------------------
@@ -312,14 +505,14 @@ time.sleep(0.6)
 check("a paused read stays where it is",
       session.status()["paragraph"] == paused_at and session.status()["state"] == "paused")
 
-opened_before = len(engine.requests)
+played_before = player.frames
 session.skip(1)
 check("the first press after a pause resumes rather than moves",
       session.status()["paragraph_target"] == paused_at,
       f"{session.status()['paragraph_target']} vs {paused_at}")
-time.sleep(0.4)
 check("and it starts speaking again",
-      len(engine.requests) > opened_before, str(engine.requests))
+      wait_until(lambda: player.frames > played_before, 5.0),
+      f"{played_before} -> {player.frames}")
 session.cancel()
 session.wait(10.0)
 check("nothing is left open after a pause and a cancel", engine.open_generations == 0)
