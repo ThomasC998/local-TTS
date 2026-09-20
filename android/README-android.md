@@ -22,7 +22,7 @@ To build it yourself instead, open `android/` in Android Studio and
 ## Pairing
 
 1. On the Mac: `python breeze_server.py --bind lan`
-2. Open `https://127.0.0.1:7860` on the Mac and go to the **Phone** panel.
+2. Open `http://127.0.0.1:7860` on the Mac and go to the **Phone** panel.
 3. In the app, tap **Pair**, and scan the code.
 
 The code carries the address, the access token and the fingerprint of the Mac's

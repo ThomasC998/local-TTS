@@ -9,11 +9,13 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -44,6 +46,8 @@ object ReadController {
         val readId: String,
         val endpoint: Server.Endpoint,
         val server: Server,
+        /** Set once no more paragraphs are coming, however that came about. */
+        val complete: AtomicBoolean = AtomicBoolean(false),
     )
 
     /** What is being read: text the phone already has, or a picture of some. */
@@ -85,11 +89,19 @@ object ReadController {
 
                 val readId = started.optString("read_id")
                 if (readId.isBlank()) throw Server.ServerError("The Mac started no read")
-                active.set(Live(readId, endpoint, server))
+                val live = Live(readId, endpoint, server)
+                active.set(live)
 
                 val title = started.optString("preview").take(60).ifBlank { "Reading" }
-                play(app, server, endpoint, readId, started.optInt("paragraphs", 1), title)
-                follow(app, server, endpoint, readId, started, title)
+                play(app, server, endpoint, live, started.optInt("paragraphs", 1), title)
+                try {
+                    follow(app, server, endpoint, readId, started, title)
+                } finally {
+                    // However following ended -- the model finished, gave up, or
+                    // failed -- nothing more is coming, which is what lets the
+                    // player treat running out of paragraphs as the end.
+                    live.complete.set(true)
+                }
             } catch (error: Exception) {
                 Log.w(TAG, "The read failed", error)
                 say(app, error.message ?: "That did not work")
@@ -123,19 +135,42 @@ object ReadController {
         app: Context,
         server: Server,
         endpoint: Server.Endpoint,
-        readId: String,
+        live: Live,
         paragraphs: Int,
         title: String,
     ) {
         val items = (0 until maxOf(paragraphs, 1)).map { index ->
-            item(server, endpoint, readId, index, title)
+            item(server, endpoint, live.readId, index, title)
         }
         main.post {
             controller(app) { player ->
+                player.addListener(ends(app, live))
                 player.setMediaItems(items)
                 player.prepare()
                 player.play()
             }
+        }
+    }
+
+    /**
+     * Notice the read ending, and let go of the player when it does.
+     *
+     * The service stops itself when playback ends, but a service somebody is
+     * still bound to is not destroyed -- and this app binds to its own. So
+     * without this the read finishes, the audio stops, and the process stays
+     * up at service priority with an ExoPlayer in it until Android needs the
+     * memory for something else.
+     *
+     * Running out of paragraphs only means the read is over once the Mac has
+     * said there are no more coming. While a language model is still writing,
+     * the player can reach the end of what exists and be given more a moment
+     * later, and that is not something to shut down over.
+     */
+    private fun ends(app: Context, live: Live) = object : Player.Listener {
+        override fun onPlaybackStateChanged(state: Int) {
+            if (state != Player.STATE_ENDED || !live.complete.get()) return
+            active.compareAndSet(live, null)
+            release()
         }
     }
 

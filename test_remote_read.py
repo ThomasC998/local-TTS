@@ -153,29 +153,52 @@ check("mono 16-bit PCM at the engine's rate",
 check("the audio is as long as the engine made it",
       len(blob) - 44 == 2400 * 2, str(len(blob) - 44))
 
-# The first paragraph is asked for while it is still being made, so it goes out
-# as it arrives: no length in the header, because there is nothing to put there
-# yet. That is what lets the phone start playing before the engine has finished.
-check("a paragraph still being made streams",
-      headers.get("Content-Length") is None
-      and headers.get("X-Breeze-Cached") == "0", str(headers))
-check("...and its header says the length is not known yet",
-      wav_frames(blob) == 0xFFFFFFFF // 2, str(wav_frames(blob)))
+# A paragraph is never sent before it is finished, so its length is always in
+# the header. This is the regression test for a read that played its first
+# paragraph and then sat there: a WAV header saying 0xFFFFFFFF means "read to
+# the end of the stream", ExoPlayer turns that into a duration of twenty-four
+# hours, and a paragraph that never ends is a read that never reaches the next
+# one and a playback service that never stops.
+check("a paragraph is sent with its length",
+      headers.get("Content-Length") == str(len(blob)),
+      f"{headers.get('Content-Length')} vs {len(blob)}")
+check("...and the header never claims a length it does not know",
+      wav_frames(blob) == 2400, str(wav_frames(blob)))
+check("...and says how long it is in seconds",
+      headers.get("X-Breeze-Seconds") == "0.10", str(headers.get("X-Breeze-Seconds")))
 
-# Asked for again, it is finished, and now it can be sent as a file with a
-# length -- which is what gives the phone a duration and a working scrub bar.
+# Asked for again it comes out of the cache, and byte for byte it is the same
+# response: nothing about it depended on whether the engine was still running.
 generated_once = len(engine.requests)
 headers, again = collect(read, 0)
-check("a finished paragraph is sent with its length",
-      headers.get("Content-Length") == str(len(again)),
-      f"{headers.get('Content-Length')} vs {len(again)}")
-check("...and says it came from the cache", headers.get("X-Breeze-Cached") == "1")
-check("...with the real length in the header too",
-      wav_frames(again) == 2400, str(wav_frames(again)))
+check("asking again does not generate it again", len(engine.requests) == generated_once,
+      f"{len(engine.requests)} vs {generated_once}")
 check("the audio itself is identical either way", again[44:] == blob[44:])
-check("and generating it again was not necessary",
-      len(engine.requests) == generated_once, str(engine.paragraphs()))
+check("...and so is the length it declares", again[:44] == blob[:44])
 
+# ---------------------------------------------------------------------------
+section("The first sentence gets a paragraph of its own")
+# ---------------------------------------------------------------------------
+from remote_read import opening_split
+
+check("a long opening paragraph is split after its first sentence",
+      opening_split([0, 0, 0, 1, 1]) == [-1, 0, 0, 1, 1],
+      str(opening_split([0, 0, 0, 1, 1])))
+check("...and the split id differs from the one that follows it",
+      opening_split([0, 0])[0] != opening_split([0, 0])[1])
+check("a first paragraph that is already one sentence is left alone",
+      opening_split([0, 1, 1]) == [0, 1, 1], str(opening_split([0, 1, 1])))
+check("one chunk is left alone", opening_split([0]) == [0])
+check("nothing is left alone", opening_split([]) == [])
+
+split_read, split_engine = build_read([["First sentence.", "Second sentence."]])
+split_read.start()
+check("so the read has two paragraphs where the document had one",
+      wait_until(lambda: split_read.manifest()["paragraphs"] == 2, 5.0),
+      str(split_read.manifest()["paragraphs"]))
+check("...and the first of them is just the first sentence",
+      split_read.manifest()["paragraphs"] == 2)
+split_read.close("done")
 
 # ---------------------------------------------------------------------------
 section("Where the phone is")

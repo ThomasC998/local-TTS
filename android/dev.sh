@@ -37,7 +37,9 @@ boot)
     if adb shell true 2>/dev/null; then
         echo "A device is already attached."; exit 0
     fi
-    echo "Starting $AVD…"
+    # Braced: bash 3.2 outside a UTF-8 locale takes the first byte of the
+    # ellipsis for part of the name and calls it unbound.
+    echo "Starting ${AVD}…"
     nohup emulator -avd "$AVD" -no-snapshot-save -no-boot-anim \
         >"${TMPDIR:-/tmp}/emulator.log" 2>&1 &
     until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
@@ -49,7 +51,15 @@ boot)
 install)
     cd "${TMPDIR:-/tmp}"
     gh release download phone-latest --repo "$REPO" --pattern 'read-on-mac.apk' --clobber
-    adb install -r read-on-mac.apk
+    # Each CI run signs with a debug key of its own, so a build from a later run
+    # is refused as an update of the one already here. Nothing is lost by
+    # starting again -- pairing is one command -- so take the refusal as meaning
+    # remove it first.
+    if ! adb install -r read-on-mac.apk 2>&1 | tee /dev/stderr | grep -q '^Success'; then
+        echo "Signed by a different build; replacing it."
+        adb uninstall "$APP" >/dev/null 2>&1 || true
+        adb install read-on-mac.apk
+    fi
     adb shell pm grant "$APP" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
     echo "Installed."
     ;;
@@ -58,14 +68,27 @@ pair)
     # The pairing code is meant to be photographed, and an emulator's camera
     # cannot photograph the Mac's screen. A debug build lets its own data
     # directory be written through run-as, so the same values go in directly.
-    python3 - "$PROJECT" <<'PY' >"${TMPDIR:-/tmp}/breeze.xml"
-import html, json, sys, os
-sys.path.insert(0, sys.argv[1])
-os.chdir(sys.argv[1])
-import mac_power, mobile_auth
-payload = mobile_auth.pairing_payload(7860, {"mac_addresses": mac_power.mac_addresses()})
-if not payload.get("host"):
-    raise SystemExit("This Mac has no network address; start the server with --bind lan")
+    #
+    # They are asked of the running server rather than worked out here, for two
+    # reasons. The port is the server's to decide -- devices are served on a
+    # different one from this Mac's own tools -- so asking means this follows it
+    # wherever it moves. And the name makes the emulator a device in its own
+    # right: it gets a token of its own, so a read started here does not replace
+    # the one playing on the real phone, and forgetting one leaves the other.
+    python3 - "${BREEZE_PORT:-7860}" <<'PY' >"${TMPDIR:-/tmp}/breeze.xml"
+import html, json, sys, urllib.request
+
+where = f"http://127.0.0.1:{sys.argv[1]}/v1/pair?device=emulator"
+try:
+    with urllib.request.urlopen(where, timeout=10) as answer:
+        payload = json.load(answer)
+except OSError as problem:
+    raise SystemExit(f"No server answering on {where} ({problem}). Start it first.")
+if not payload.get("reachable"):
+    raise SystemExit(
+        "The server is running without --bind lan, so it is not on the network "
+        "and no device -- emulated or real -- can reach it."
+    )
 print('<?xml version="1.0" encoding="utf-8" standalone="yes" ?>')
 print("<map>")
 for key, value in (
@@ -73,7 +96,7 @@ for key, value in (
     ("token", payload["token"]),
     ("fingerprint", payload["fingerprint"]),
     ("name", payload["name"]),
-    ("macs", ",".join(payload["mac_addresses"][:1])),
+    ("macs", ",".join(payload.get("mac_addresses", [])[:1])),
 ):
     print(f'    <string name="{key}">{html.escape(str(value))}</string>')
 print(f'    <int name="port" value="{payload["port"]}" />')

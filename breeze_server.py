@@ -2816,22 +2816,21 @@ def read_manifest(read_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/v1/read/{read_id}/p{index}.wav")
-def read_paragraph(
-    read_id: str, index: int, request: Request, wait: float = 0.0
-) -> StreamingResponse:
+def read_paragraph(read_id: str, index: int, request: Request) -> StreamingResponse:
     """One paragraph, as a WAV. Asking for it is also how the phone says where it is.
 
-    ``wait`` is a number of seconds the response may be held back for the
-    paragraph to be finished, so that it can be sent with a real length and the
-    player can show a duration. It is meant to be small: a long paragraph takes
-    about as long to make as it does to say, and waiting for all of it is a
-    phone showing a spinner for half a minute. Past the deadline the audio
-    streams as it is made.
+    The paragraph is always sent finished, with its length in the header, and
+    the request waits if it has to. ``remote_read`` says why sending it as it
+    is made -- which is what a ``?wait=`` on the URL used to ask for -- turned
+    out to break the read rather than hurry it.
     """
     read = _owned_read(read_id, request)
     if not read.exists(index):
         raise HTTPException(404, f"This read has no paragraph {index}")
-    headers, body = read.paragraph(index, wait=float(wait))
+    try:
+        headers, body = read.paragraph(index)
+    except TimeoutError as stalled:
+        raise HTTPException(504, str(stalled)) from stalled
     return StreamingResponse(body, media_type="audio/wav", headers=headers)
 
 

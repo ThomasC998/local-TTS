@@ -128,10 +128,10 @@ class WakeTest {
 class ParagraphUrlTest {
 
     @Test
-    fun `a paragraph carries its token and asks for a known length`() {
-        val url = Server.paragraphUrl("https://192.168.0.150:7860", "rd_abc", 3, "tok")
+    fun `a paragraph carries its token and asks for nothing else`() {
+        val url = Server.paragraphUrl("https://192.168.0.150:7861", "rd_abc", 3, "tok")
         assertEquals(
-            "https://192.168.0.150:7860/v1/read/rd_abc/p3.wav?wait=2&t=tok", url
+            "https://192.168.0.150:7861/v1/read/rd_abc/p3.wav?t=tok", url
         )
     }
 

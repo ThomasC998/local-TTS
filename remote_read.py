@@ -18,11 +18,26 @@ So a request sets ``engine.position``, and everything the engine does with that
 -- staying a few paragraphs ahead, trimming the furthest away when the cache
 grows -- follows the listener without being told about it.
 
-Two shapes of response, for one reason. A paragraph the engine has finished is
-sent with its real length, so the phone can seek inside it and show a duration;
-a paragraph still being made is sent as it arrives, so the first one starts
-playing seconds before it is finished. Everything after the first is normally
-finished before the phone asks.
+One shape of response, and the reason is worth writing down because the other
+one looked so much better. A paragraph goes out only once it is finished, with
+its true length in the header.
+
+The tempting alternative is to send it as it is made, so the first one starts
+playing seconds sooner. But a WAV says its length in its first 44 bytes, before
+a single sample exists, and audio still being generated has no length to
+declare. The convention for that is to write 0xFFFFFFFF and mean "read to the
+end of the stream", which is a lie players are free to believe: ExoPlayer
+believes it, works out a duration of twenty-four hours, and when the audio runs
+out it does not end the paragraph -- it sits there with the clock running,
+never reaching the next one, holding the playback service open for the rest of
+the day. Measured, not guessed: twelve seconds of speech, then two minutes of
+silence with paragraphs two and three never fetched.
+
+So the wait is real, and it is paid once. Only the paragraph being listened to
+now can ever be unfinished; the generator runs faster than speech, so by the
+time the phone asks for the next one it has been sitting in the cache for a
+while. Making the *first* paragraph a short one is what keeps that single wait
+down to a few seconds -- see ``opening_split`` below.
 """
 
 from __future__ import annotations
@@ -55,22 +70,21 @@ IDLE_EXPIRY_SECONDS = 30 * 60
 # What is sent per chunk while a paragraph is still being generated.
 STREAM_BLOCK_SECONDS = 0.5
 
-# However long a caller asks to wait for a paragraph to be finished, this is as
-# long as it gets. A request that holds a connection open for a minute is not a
-# slow request, it is a broken one, and the phone's HTTP client gives up around
-# there anyway.
-MAX_WAIT = 8.0
+# How long a request may wait for its paragraph before giving up on it.
+#
+# Not a tuning knob so much as a deadlock guard: the paragraph being waited for
+# is being generated as we wait, and generation runs faster than speech, so the
+# wait is roughly how long the paragraph takes to say and always ends. This is
+# the number that says a generator which has stopped producing without saying
+# so is a fault, not a slow paragraph. It sits under the phone's own 60-second
+# read timeout so that the server is the one that decides, and answers.
+WAIT_CEILING = 45.0
 
-# The length written into the header of a paragraph that is not finished yet.
-# The convention for a WAV whose length is not known when the header goes out;
-# players read the data chunk as running to the end of the stream.
-_UNKNOWN_LENGTH = 0xFFFFFFFF
 
-
-def _wav_header(sample_rate: int, frames: int | None) -> bytes:
-    """A 44-byte mono 16-bit PCM header. ``frames`` of None means "still coming"."""
-    data_bytes = _UNKNOWN_LENGTH if frames is None else frames * 2
-    riff_bytes = _UNKNOWN_LENGTH if frames is None else data_bytes + 36
+def _wav_header(sample_rate: int, frames: int) -> bytes:
+    """A 44-byte mono 16-bit PCM header for audio whose length is known."""
+    data_bytes = frames * 2
+    riff_bytes = data_bytes + 36
     return struct.pack(
         "<4sI4s4sIHHIIHH4sI",
         b"RIFF", riff_bytes, b"WAVE",
@@ -83,6 +97,34 @@ def _pcm16(block: np.ndarray) -> bytes:
     """One engine block as the 16-bit samples that go on the wire."""
     clipped = np.clip(np.asarray(block, dtype=np.float32), -1.0, 1.0)
     return (clipped * 32767.0).astype("<i2").tobytes()
+
+
+def opening_split(paragraph_ids: list[int]) -> list[int]:
+    """Give the first sentence a paragraph to itself.
+
+    Every paragraph after the first is generated while an earlier one is being
+    spoken, so it is finished before anyone asks for it. The first has nobody
+    ahead of it: the phone asks, and waits for as long as that paragraph takes
+    to make, which is roughly as long as it takes to say. A paragraph of a
+    hundred words is half a minute of waiting at a spinner.
+
+    A chunk is a sentence, so making the first chunk its own paragraph turns
+    that wait into a few seconds, and by the time that sentence has been read
+    out the rest of its paragraph is ready. The cost is one extra stop for the
+    skip button, at the end of the first sentence, and it buys the difference
+    between a read that starts and one that looks broken.
+
+    Ids only have to *change* where a paragraph changes -- ``ParagraphBook``
+    groups runs of equal ids -- so this needs no renumbering, just one id that
+    differs from its neighbour.
+
+    Only the clipboard path is chunked in advance like this. A read written by
+    the language model arrives paragraph by paragraph already, and its first
+    one is short because the model has only just started writing.
+    """
+    if len(paragraph_ids) < 2 or paragraph_ids[0] != paragraph_ids[1]:
+        return list(paragraph_ids)
+    return [min(paragraph_ids) - 1, *paragraph_ids[1:]]
 
 
 class RemoteRead:
@@ -101,8 +143,13 @@ class RemoteRead:
         self.text = text
         self.created_at = time.time()
         self._touched = time.monotonic()
+        # A copy, because the split below is the phone's business: the same
+        # prepared job read aloud on this Mac keeps the paragraphs the document
+        # actually has.
+        self._job = dict(prepared["job"])
+        self._job["paragraph_ids"] = opening_split(self._job.get("paragraph_ids") or [])
+        prepared = {**prepared, "job": self._job}
         self._prepared = prepared
-        self._job = prepared["job"]
         self._recording: archive.Recording = prepared["recording"]
         self._tts = self._job["engine"]
         self._engine = ParagraphEngine(prepared, text)
@@ -196,55 +243,45 @@ class RemoteRead:
             return False
         return self._engine.wait_for(index, threading.Event())
 
-    def paragraph(
-        self, index: int, wait: float = 0.0
-    ) -> tuple[dict[str, str], Iterator[bytes]]:
+    def paragraph(self, index: int) -> tuple[dict[str, str], Iterator[bytes]]:
         """One paragraph as a WAV response: headers, then the body.
 
         Asking for it is what moves the listener: the engine is told this is
         where the phone is, and only if nothing has made this paragraph is the
         engine sent to it.
 
-        ``wait`` is how many seconds the response may be held back for the
-        paragraph to finish, and it is a small number for a reason worth
-        writing down.
+        The response is always a finished paragraph with its true length, which
+        is what lets the player show a duration, seek inside it, and -- the part
+        that matters most -- know when it has ended and move to the next one.
+        If it is not finished yet, the request waits for it. See this module's
+        own notes for why the obvious alternative is not one.
 
-        A finished paragraph can be sent with its length, which is what lets a
-        player show a duration and a working scrub bar; an unfinished one
-        cannot, and what a player infers from a streamed WAV instead is
-        nonsense. So waiting is worth a moment. But only a moment: a paragraph
-        of a hundred words is half a minute of speech and takes roughly as long
-        to make, and waiting for all of it means half a minute of a phone
-        showing a spinner before it plays a word. Past the deadline the audio
-        goes out as it is made -- the engine runs faster than the speech it is
-        producing, so it stays ahead once it has started.
+        A caller may still put ``?wait=`` on the URL; earlier versions of the
+        app do. It is accepted and ignored, because the answer no longer
+        depends on it.
         """
         self.touch()
         self._engine.position = index
         with self._lock:
             self._served.add(index)
 
-        if wait > 0 and not self._engine.complete(index):
-            self._await_paragraph(index, deadline=time.monotonic() + min(wait, MAX_WAIT))
+        if not self._engine.complete(index):
+            self._await_paragraph(index, deadline=time.monotonic() + WAIT_CEILING)
+        if not self._engine.complete(index):
+            raise TimeoutError(
+                f"Paragraph {index} was still being made after "
+                f"{WAIT_CEILING:.0f} seconds"
+            )
 
-        if self._engine.complete(index):
-            frames = self._engine.cache.frames(index)
-            headers = {
-                "Content-Type": "audio/wav",
-                "Content-Length": str(44 + frames * 2),
-                "Accept-Ranges": "none",
-                "X-Breeze-Paragraph": str(index),
-                "X-Breeze-Cached": "1",
-            }
-            return headers, self._body(index, frames)
-
+        frames = self._engine.cache.frames(index)
         headers = {
             "Content-Type": "audio/wav",
-            "Cache-Control": "no-store",
+            "Content-Length": str(44 + frames * 2),
+            "Accept-Ranges": "none",
             "X-Breeze-Paragraph": str(index),
-            "X-Breeze-Cached": "0",
+            "X-Breeze-Seconds": f"{frames / self._tts.sample_rate:.2f}",
         }
-        return headers, self._body(index, None)
+        return headers, self._body(index, frames)
 
     def _await_paragraph(self, index: int, deadline: float) -> None:
         """Give the generator until ``deadline`` to finish this paragraph.
@@ -265,7 +302,7 @@ class RemoteRead:
         finally:
             timer.cancel()
 
-    def _body(self, index: int, frames: int | None) -> Iterator[bytes]:
+    def _body(self, index: int, frames: int) -> Iterator[bytes]:
         rate = self._tts.sample_rate
         stop = threading.Event()
         yield _wav_header(rate, frames)

@@ -12,7 +12,7 @@ There is no QR code in this flow — see [Pairing without a camera](#3-pairing-w
 ```bash
 cd ~/Documents/BreezeTTS2
 
-# 1. the server, reachable from the emulator
+# 1. the server: this Mac on 7860 as always, devices on 7861
 python breeze_server.py --bind lan
 
 # 2. the phone (in another terminal)
@@ -73,11 +73,16 @@ the same values in directly:
 ./dev.sh pair
 ```
 
-It reads the pairing payload from the server here — address, token,
+It asks the server here for a pairing payload — address, port, token,
 fingerprint, hardware address — writes it as the app's own preferences file,
 and pushes it with `adb`. This works because the APK is a **debug** build, and
 `run-as` lets a debug build's own data directory be written. It would not work
 on a release build, which is the point.
+
+The emulator pairs as a device called **emulator**, separate from your real
+phone. So it holds a token of its own, a read started here does not replace
+whatever the phone is playing, and *Forget* on one leaves the other paired.
+Both appear on the **Phone** panel.
 
 The app then behaves exactly as a paired phone does.
 
@@ -107,9 +112,11 @@ app failed at is posted back and appears there prefixed `[phone]`.
 To see it from the server's point of view:
 
 ```bash
-TOKEN=$(python3 -c "import mobile_auth; print(mobile_auth.load_token())")
-curl -sk https://127.0.0.1:7860/v1/reads | python3 -m json.tool
+curl -s http://127.0.0.1:7860/v1/reads | python3 -m json.tool
 ```
+
+No token there: that port is this Mac's own, and a request from this Mac is
+already known. The phone's port is the other one.
 
 ## 6. Things that will bite
 
