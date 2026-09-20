@@ -175,6 +175,7 @@
     <button class="tab" data-tab="voices">Voice library</button>
     <button class="tab" data-tab="test">Test a voice</button>
     <button class="tab" data-tab="system">System speech</button>
+    <button class="tab" data-tab="phone">Phone</button>
   </nav>
 
   <section class="panel active" id="tab-synth">
@@ -837,6 +838,64 @@ It rained for six days straight, and then, on the seventh, nothing.</textarea>
     <div class="card" id="tResultsCard" style="display:none">
       <h2>Results <span class="hint">— compare each against the saved sample above</span></h2>
       <div id="tResults"></div>
+    </div>
+  </section>
+
+  <!-- ===================================================================
+       Phone: the same read, on an Android phone on this network.
+
+       Pairing is a photograph rather than a network message on purpose. The
+       code below carries the token that grants access to this server and the
+       fingerprint of the certificate the phone will pin, and both of them have
+       to reach the phone without crossing the Wi-Fi they are meant to protect.
+  ==================================================================== -->
+  <section class="panel" id="tab-phone">
+    <div class="card">
+      <div class="take-head">
+        <div class="take-title">Read on my phone</div>
+        <div class="hint" id="phoneBind">—</div>
+      </div>
+      <p class="hint" style="margin-top:0">
+        The phone talks to this Mac over your own network — nothing leaves the house,
+        and no account is involved. Start the server with
+        <code>--bind lan</code>, then scan this once.
+      </p>
+      <div id="phoneQrWrap" style="display:none">
+        <div id="phoneQr" style="width:260px;max-width:100%;background:#fff;padding:12px;border-radius:12px"></div>
+        <div class="hint" style="margin-top:8px">
+          Fingerprint <code id="phoneFp">—</code> — the phone pins this, so nothing on the
+          Wi-Fi can sit in the middle of a read.
+        </div>
+        <div class="hint">Wake packets go to <code id="phoneMac">—</code></div>
+      </div>
+      <div class="note" id="phoneLocalOnly">
+        This server is bound to <b>this Mac only</b>, so the phone cannot reach it yet.
+        Restart it with <code>python breeze_server.py --bind lan</code> and reload this page.
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button type="button" class="small ghost" id="phoneRotate">Forget paired devices</button>
+        <span class="msg" id="phoneMsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Sleep <span class="hint">— what this Mac does while you are not using it</span></h2>
+      <div class="row">
+        <label>Mode
+          <select id="phonePower">
+            <option value="off">Leave the system settings alone</option>
+            <option value="keep_on">Keep on — stay awake with the lid closed</option>
+            <option value="sleep_when_done">Sleep when done — sleep after a read</option>
+          </select>
+        </label>
+      </div>
+      <div class="hint" id="phonePowerState">—</div>
+      <div class="note" id="phonePowerHelp" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <h2>Screenshots <span class="hint">— a local model reads the part that matters</span></h2>
+      <div class="hint" id="phoneVision">—</div>
     </div>
   </section>
 </div>
@@ -1592,7 +1651,7 @@ function showError(message) { $('err').textContent = message; $('err').style.dis
    conditions on that recording. The Test tab exists to hear the difference.
 =========================================================================== */
 
-const TAB_IDS = ['synth', 'design', 'voices', 'test', 'system'];
+const TAB_IDS = ['synth', 'design', 'voices', 'test', 'system', 'phone'];
 
 function selectTab(name) {
   document.querySelectorAll('.tab').forEach(button =>
@@ -1601,6 +1660,7 @@ function selectTab(name) {
   if (name === 'voices') loadVoices();
   if (name === 'test') loadTestVoices($('tVoice').value || null);
   if (name === 'system') { loadSystem(); loadHotkeys(); }
+  if (name === 'phone') loadPhone();
   // Polling only while the tab is visible: the status call reads the clipboard,
   // and doing that in the background would be both wasteful and rude.
   clearInterval(systemPoll);
@@ -2441,6 +2501,77 @@ async function streamTestLine(voice, line, index, body, live) {
     throw error;
   }
 }
+
+/* =========================================================================
+   Phone
+
+   Pairing hands the phone three things it cannot work out for itself: where
+   this Mac is, the token for every request, and the fingerprint of the
+   certificate to pin. They go across as a picture, which is the one channel
+   the network being secured cannot touch.
+========================================================================= */
+async function loadPhone() {
+  try {
+    const pair = await (await api('/v1/pair')).json();
+    $('phoneBind').textContent = pair.reachable
+      ? `${pair.name} · ${pair.host}:${pair.port}`
+      : 'this Mac only';
+    $('phoneQrWrap').style.display = pair.reachable ? '' : 'none';
+    $('phoneLocalOnly').style.display = pair.reachable ? 'none' : '';
+    if (pair.qr_svg) $('phoneQr').innerHTML = pair.qr_svg;
+    else if (pair.reachable) $('phoneQr').textContent =
+      'Install the qrcode package to show a pairing code: pip install -r requirements.txt';
+    $('phoneFp').textContent = (pair.fingerprint || '—').slice(0, 16) + '…';
+    $('phoneMac').textContent = (pair.mac_addresses || [])[0] || 'none found';
+  } catch (error) { setMsg('phoneMsg', String(error), true); }
+
+  try {
+    const power = await (await api('/v1/power')).json();
+    renderPower(power);
+  } catch (_) { /* the power module is macOS-only */ }
+
+  try {
+    const vision = await (await api('/v1/vision/status')).json();
+    $('phoneVision').textContent = vision.available
+      ? `Ready — ${vision.backend}${vision.model ? ' · ' + vision.model : ''}`
+      : vision.reason;
+  } catch (_) { /* optional */ }
+}
+
+function renderPower(power) {
+  $('phonePower').value = power.mode || 'off';
+  const battery = power.battery || {};
+  const charge = battery.percent == null ? '' :
+    ` · battery ${battery.percent}%${battery.charging ? ' (charging)' : ''}`;
+  $('phonePowerState').textContent =
+    `${power.holding_awake ? 'Holding this Mac awake' : 'Sleeping normally'}`
+    + `${charge} · wake for network access ${power.womp ? 'on' : 'OFF'}`;
+  const trouble = power.error
+    || (power.womp ? '' : 'Turn on "Wake for network access" in System Settings > '
+        + 'Battery > Options, or the phone will not be able to wake this Mac.');
+  $('phonePowerHelp').style.display = trouble ? '' : 'none';
+  $('phonePowerHelp').textContent = trouble;
+}
+
+$('phonePower').addEventListener('change', async () => {
+  setMsg('phoneMsg', 'Setting…');
+  try {
+    const power = await (await postJson('/v1/power/mode',
+      { mode: $('phonePower').value })).json();
+    renderPower(power);
+    setMsg('phoneMsg', power.error ? power.error : 'Set.', !!power.error);
+  } catch (error) { setMsg('phoneMsg', String(error), true); }
+});
+
+$('phoneRotate').addEventListener('click', async () => {
+  if (!confirm('Every paired phone will stop working until it is paired again. Continue?'))
+    return;
+  try {
+    await postJson('/v1/pair/rotate', {});
+    setMsg('phoneMsg', 'Done — restart the server, then pair the phone again.');
+    loadPhone();
+  } catch (error) { setMsg('phoneMsg', String(error), true); }
+});
 
 /* =========================================================================
    System speech

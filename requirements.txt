@@ -84,3 +84,16 @@ python-dotenv>=1.0
 requests>=2.31
 google-genai>=1.0
 psutil>=5.9
+
+# The phone path: a token and a self-signed certificate for the LAN bind, a
+# Bonjour record so the phone finds this Mac after the router renumbers it, and
+# a QR code to carry the pairing secret across a gap no network can reach.
+# qrcode writes SVG here, so Pillow is not needed.
+cryptography>=42,<47
+zeroconf>=0.132,<1
+qrcode>=7.4,<9
+
+# Screenshot text, when LM Studio is not running. Apple's own recognizer is
+# already on the machine; this is only the binding to it.
+pyobjc-framework-Vision>=10.0; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"

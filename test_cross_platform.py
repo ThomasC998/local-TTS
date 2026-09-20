@@ -990,6 +990,13 @@ def test_nothing_private_is_committed() -> None:
     for path in ("state/archive/2026-01-01/utt_x/audio.wav", "outputs/take.wav"):
         check(bool(auditor.classify({path})), f"{path} would be caught")
 
+    # The pairing token is the whole of the phone's authority over this Mac,
+    # and the TLS key is what stops anything on the Wi-Fi impersonating it.
+    # Publishing either would be worse than publishing a recording.
+    for path in ("state/mobile_token.json", "state/tls/server.key",
+                 "state/tls/server.crt"):
+        check(bool(auditor.classify({path})), f"{path} would be caught")
+
 
 def main() -> int:
     print("cross-platform checks")

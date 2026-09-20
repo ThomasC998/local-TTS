@@ -29,6 +29,7 @@ import io
 import json
 import logging
 import os
+import socket
 import threading
 import time
 import uuid
@@ -42,18 +43,28 @@ import numpy as np
 import soundfile as sf
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 from starlette.concurrency import run_in_threadpool
 
 import archive
 import audio_out
+import discovery
 import hotkeys
 import llm_providers
 import llm_stream
+import mac_power
+import mobile_auth
 import platform_support
+import remote_read
 import speech_config
 import speech_session
 import tts_backends
+import vision_ocr
 import voice_store
 from breeze_pipeline import (
     CHINESE_VOCAL_EVENTS,
@@ -445,6 +456,11 @@ async def lifespan(app: FastAPI):
     yield
     audio_out.WATCHER.stop()
     _speak_cancel("cancelled")
+    # Reads hold generated audio and a running generator; the power hold is a
+    # system-wide setting that outlives this process if it is not given back.
+    remote_read.READS.clear("shutdown")
+    discovery.ADVERTISER.stop()
+    mac_power.MANAGER.release()
     STATE["engine"] = None
 
 
@@ -2647,6 +2663,289 @@ def delete_system_speech_audio_export(name: str) -> dict[str, Any]:
     return {"deleted": name, "exports": archive.exports()}
 
 
+# ---------------------------------------------------------------------------
+# The phone: one read, served a paragraph at a time
+# ---------------------------------------------------------------------------
+# Everything here is the same engine the hotkeys drive -- same voice, same text
+# preparation, same paragraph cache. The only difference is where the audio
+# comes out, and that the listener is holding the transport controls rather
+# than pressing keys on this machine.
+
+
+def _anything_reading() -> bool:
+    """Whether a read of any kind is in flight. Asked before sleeping the Mac."""
+    if _active_session() is not None:
+        return True
+    return bool(remote_read.READS.live())
+
+
+async def _read_fields(request: Request) -> tuple[dict[str, Any], bytes | None, str]:
+    """A read request's fields, plus an uploaded screenshot if there was one."""
+    content_type = (request.headers.get("content-type") or "").lower()
+    if not content_type.startswith("multipart/form-data"):
+        fields, _ = await _read_params(request)
+        return fields, None, ""
+    form = await request.form()
+    fields: dict[str, Any] = {}
+    image: bytes | None = None
+    media_type = ""
+    for key, value in form.multi_items():
+        if hasattr(value, "read"):
+            if key in {"image", "screenshot"}:
+                image = await value.read()
+                media_type = getattr(value, "content_type", "") or "image/png"
+            continue
+        fields[key] = value
+    return fields, image, media_type
+
+
+@app.post("/v1/read")
+async def read_start(request: Request) -> dict[str, Any]:
+    """Start a read for the phone. Returns as soon as there is something to play.
+
+    Takes ``text``, or an ``image`` to run through the screenshot reader first.
+    ``llm`` routes the text through the language model the way the hotkey path
+    does; the phone turns it off when it wants the words exactly as they are.
+    """
+    fields, image, media_type = await _read_fields(request)
+    source = "text"
+    ocr: dict[str, Any] | None = None
+
+    text = (fields.get("text") or "").strip()
+    if image:
+        try:
+            ocr = await run_in_threadpool(
+                vision_ocr.extract, image, media_type or "image/png"
+            )
+        except Exception as exc:  # noqa: BLE001 - reported to the phone as data
+            raise HTTPException(422, f"Could not read that screenshot: {exc}") from exc
+        text = (ocr.get("text") or "").strip()
+        source = "screenshot"
+        if not text:
+            raise HTTPException(
+                422, "No readable text was found in that screenshot"
+            )
+    if not text:
+        raise HTTPException(400, "Field 'text' is required")
+
+    # One engine, one listener: a read starting on the phone takes over from
+    # whatever this machine was saying, exactly as a second hotkey press does.
+    _speak_cancel("replaced")
+    mac_power.MANAGER.cancel_sleep()
+
+    prepared = await run_in_threadpool(_prepare_utterance, fields, text)
+    read = await run_in_threadpool(remote_read.READS.create, prepared, text)
+    manifest = read.manifest()
+    return {
+        "action": "reading",
+        "source": source,
+        "ocr": {key: ocr[key] for key in ("backend", "model", "filtered") if ocr}
+        if ocr else None,
+        "text": text if source == "screenshot" else None,
+        "chars": len(text),
+        "voice_id": prepared["voice_id"],
+        "llm": prepared["use_llm"],
+        "preview": read.preview(),
+        **manifest,
+    }
+
+
+@app.get("/v1/read/{read_id}/manifest")
+def read_manifest(read_id: str) -> dict[str, Any]:
+    """How far the read has got: how many paragraphs, which are ready to play."""
+    read = remote_read.READS.get(read_id)
+    if read is None:
+        raise HTTPException(404, "No such read; it may have expired")
+    return {**read.manifest(), "preview": read.preview(read.manifest()["position"])}
+
+
+@app.get("/v1/read/{read_id}/p{index}.wav")
+def read_paragraph(read_id: str, index: int, wait: int = 0) -> StreamingResponse:
+    """One paragraph, as a WAV. Asking for it is also how the phone says where it is.
+
+    ``wait=1`` holds the response until the paragraph is finished, so it goes
+    out with a real length and the player can show a duration and seek inside
+    it. Without it the audio streams as it is made, which starts sooner and is
+    what a plain playlist wants.
+    """
+    read = remote_read.READS.get(read_id)
+    if read is None:
+        raise HTTPException(404, "No such read; it may have expired")
+    if not read.exists(index):
+        raise HTTPException(404, f"This read has no paragraph {index}")
+    headers, body = read.paragraph(index, wait=bool(wait))
+    return StreamingResponse(body, media_type="audio/wav", headers=headers)
+
+
+@app.get("/v1/read/{read_id}/playlist.m3u")
+def read_playlist(read_id: str, request: Request) -> Response:
+    """The whole read as a playlist, for any audio player that is not the app."""
+    read = remote_read.READS.get(read_id)
+    if read is None:
+        raise HTTPException(404, "No such read; it may have expired")
+    base = str(request.base_url).rstrip("/")
+    token = request.query_params.get("t")
+    return Response(
+        read.playlist(base, token),
+        media_type="audio/x-mpegurl",
+        headers={"Content-Disposition": f'inline; filename="{read_id}.m3u"'},
+    )
+
+
+@app.delete("/v1/read/{read_id}")
+def read_stop(read_id: str) -> dict[str, Any]:
+    """Finish with a read and give its audio back."""
+    dropped = remote_read.READS.drop(read_id, "finished")
+    mac_power.MANAGER.arm_sleep()
+    return {"closed": dropped, "read_id": read_id}
+
+
+@app.get("/v1/reads")
+def read_list() -> dict[str, Any]:
+    return {"reads": remote_read.READS.live()}
+
+
+@app.post("/v1/client-log")
+async def client_log(request: Request) -> dict[str, Any]:
+    """Somewhere for the phone to report what went wrong on its side.
+
+    A phone in a pocket has no console. Without this, the only way to find out
+    why a read failed there is to plug it in, which is exactly the moment the
+    problem stops happening.
+    """
+    fields, _ = await _read_params(request)
+    level = str(fields.get("level") or "info").lower()
+    message = str(fields.get("message") or "")[:2000]
+    detail = str(fields.get("detail") or "")[:4000]
+    line = f"[phone] {message}" + (f"\n{detail}" if detail else "")
+    if level in {"error", "fatal"}:
+        logger.error("%s", line)
+    elif level == "warning":
+        logger.warning("%s", line)
+    else:
+        logger.info("%s", line)
+    return {"logged": True}
+
+
+# ---------------------------------------------------------------------------
+# Screenshots, power, and pairing
+# ---------------------------------------------------------------------------
+@app.get("/v1/vision/status")
+def vision_status() -> dict[str, Any]:
+    """Whether a screenshot can be turned into text right now, and why not."""
+    return vision_ocr.status()
+
+
+@app.post("/v1/vision/extract")
+async def vision_extract(request: Request) -> dict[str, Any]:
+    """Read a screenshot without speaking it -- the phone's confirm-first path."""
+    _fields, image, media_type = await _read_fields(request)
+    if not image:
+        raise HTTPException(400, "An 'image' file is required")
+    try:
+        return await run_in_threadpool(
+            vision_ocr.extract, image, media_type or "image/png"
+        )
+    except Exception as exc:  # noqa: BLE001 - reported to the phone as data
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/v1/power")
+def power_state() -> dict[str, Any]:
+    """The sleep mode, the battery, and whether a wake packet would land."""
+    return mac_power.MANAGER.state()
+
+
+@app.post("/v1/power/mode")
+async def power_mode(request: Request) -> dict[str, Any]:
+    """Arm one of the three sleep behaviours.
+
+    ``keep_on`` holds this Mac awake with the lid closed, which needs the power
+    helper installed. ``sleep_when_done`` lets it sleep once nothing is being
+    read. ``off`` leaves the system's own settings alone.
+    """
+    fields, _ = await _read_params(request)
+    mode = str(fields.get("mode") or "").strip()
+    try:
+        return mac_power.MANAGER.set_mode(mode)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/v1/power/sleep")
+def power_sleep() -> dict[str, Any]:
+    """Sleep now. What the phone's "done listening" button does."""
+    try:
+        mac_power.MANAGER.sleep_now()
+    except mac_power.PowerUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"sleeping": True}
+
+
+@app.get("/v1/pair")
+def pair(request: Request) -> dict[str, Any]:
+    """Everything the phone needs, as data and as a QR code.
+
+    Loopback only. The payload contains the token that grants access to this
+    server, so it is served to the screen in front of the machine and to
+    nothing else -- a QR code is a channel a network cannot reach.
+    """
+    _require_loopback(request)
+    payload = mobile_auth.pairing_payload(
+        int(STATE.get("port") or 7860),
+        {"mac_addresses": mac_power.mac_addresses()},
+    )
+    return {
+        **payload,
+        "bind": STATE.get("bind") or "local",
+        "qr_svg": mobile_auth.pairing_qr_svg(payload),
+        "reachable": bool(payload.get("host")) and STATE.get("bind") != "local",
+    }
+
+
+@app.post("/v1/pair/rotate")
+def pair_rotate(request: Request) -> dict[str, Any]:
+    """Issue a new token. Every paired device has to be paired again."""
+    _require_loopback(request)
+    mobile_auth.rotate_token()
+    return {"rotated": True, "restart_required": True}
+
+
+def _require_loopback(request: Request) -> None:
+    host = request.client.host if request.client else ""
+    if host not in {"127.0.0.1", "::1", "localhost"}:
+        raise HTTPException(403, "Pairing is only available on this machine")
+
+
+
+def _resolve_bind(choice: str, host: str | None) -> tuple[str, str]:
+    """Turn --bind into an address, refusing anything that would be unsafe.
+
+    ``local`` is the default and the only one that needs nothing: the socket is
+    unreachable from the network, so a token would be guarding a door that is
+    already in a locked room.
+
+    ``lan`` listens on every interface rather than only the Wi-Fi address, for a
+    practical reason: pairing is served to loopback only, and a server that
+    cannot be reached at 127.0.0.1 is a server you cannot pair a phone with. So
+    the boundary is not which interface is bound -- it is the token on every
+    route and the certificate the phone pins, both of which this mode requires
+    before it will start. It still refuses to run without a network address, so
+    "expose this" never happens by accident on a machine that is not on a
+    network at all.
+    """
+    if host:
+        return host, "custom"
+    if choice == "local":
+        return "127.0.0.1", "local"
+    if choice == "lan" and not mobile_auth.lan_address():
+        raise SystemExit(
+            "--bind lan: this Mac has no network address right now. "
+            "Join a network, or use --bind local."
+        )
+    return "0.0.0.0", choice  # noqa: S104 - guarded by the token and TLS below
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Breeze TTS 2 HTTP server")
     parser.add_argument(
@@ -2655,8 +2954,24 @@ def main() -> None:
         default=tts_backends.default_model_path(),
         help="checkpoint directory; defaults to the active backend's own",
     )
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument(
+        "--bind",
+        choices=("local", "lan", "all"),
+        default="local",
+        help=(
+            "who may reach this server: local (this Mac only, the default), "
+            "lan (this machine's network address, for the phone), or all"
+        ),
+    )
+    parser.add_argument("--host", default=None,
+                        help="an explicit address to bind, instead of --bind")
     parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument(
+        "--no-tls",
+        action="store_true",
+        help="serve plain HTTP even off loopback -- for debugging on a trusted "
+             "wire only; the phone will not pair over it",
+    )
     parser.add_argument(
         "--audio-device",
         # "auto" means the same thing to both backends -- put the codec wherever
@@ -2677,7 +2992,46 @@ def main() -> None:
     os.environ["BREEZE_AUDIO_DEVICE"] = args.audio_device
     if args.backend:
         os.environ["BREEZE_BACKEND"] = args.backend
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+    address, scope = _resolve_bind(args.bind, args.host)
+    exposed = not address.startswith("127.") and address != "::1"
+    STATE["bind"] = scope
+    STATE["port"] = args.port
+
+    ssl_options: dict[str, Any] = {}
+    if exposed:
+        # Off loopback, the network is assumed hostile: nothing is served until
+        # there is a token to check and a certificate the phone can pin.
+        token = mobile_auth.load_token()
+        app.add_middleware(mobile_auth.TokenAuthMiddleware, token=token)
+        if not args.no_tls:
+            certificate, key = mobile_auth.ensure_certificate()
+            ssl_options = {"ssl_certfile": str(certificate), "ssl_keyfile": str(key)}
+        scheme = "http" if args.no_tls else "https"
+        reachable = mobile_auth.lan_address() or address
+        logger.info(
+            "Serving on %s://%s:%d -- paired devices only. "
+            "Open %s://127.0.0.1:%d on this Mac and scan the code "
+            "on the Phone panel to pair.",
+            scheme, reachable, args.port, scheme, args.port,
+        )
+        if args.no_tls:
+            logger.warning(
+                "--no-tls: requests to this server are readable by anything on "
+                "the same network. Do not pair a phone over this."
+            )
+        else:
+            discovery.ADVERTISER.start(
+                address,
+                args.port,
+                {
+                    "fp": mobile_auth.fingerprint() or "",
+                    "name": socket.gethostname().split(".")[0],
+                    "v": "1",
+                },
+            )
+
+    uvicorn.run(app, host=address, port=args.port, log_level="info", **ssl_options)
 
 
 if __name__ == "__main__":

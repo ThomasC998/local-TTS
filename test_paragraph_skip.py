@@ -549,7 +549,9 @@ session, engine = build_session([["only paragraph."]], debounce=0.1,
                                 engine=FakeEngine(delay=0.3))
 # A producer that has written one paragraph and has not said it is finished --
 # the shape the language-model path is in for most of a long read.
-session._fill_from_text = lambda: session._book.add(0, "only paragraph.")  # noqa: SLF001
+session._paragraphs._fill_from_text = (  # noqa: SLF001
+    lambda: session._book.add(0, "only paragraph.")  # noqa: SLF001
+)
 session.start()
 time.sleep(0.1)
 session.skip(5)
