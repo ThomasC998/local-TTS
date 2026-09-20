@@ -52,4 +52,11 @@ dependencies {
 
     // Pairing is a photograph of the Mac's screen; this reads it.
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
+    // Checks that run on the JVM in a couple of seconds -- no device, no
+    // emulator -- so they can run on every push without anyone weighing it up.
+    testImplementation("junit:junit:4.13.2")
+    // org.json ships with Android, and the stub on the JVM test classpath
+    // throws on every call. This is the real one, for tests only.
+    testImplementation("org.json:json:20240303")
 }

@@ -45,9 +45,20 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platforms;android-35" "build-tools;35.0.0" > /dev/null
 
+      - name: Check the logic that fails quietly
+        working-directory: android
+        run: gradle --no-daemon test
+
       - name: Build the APK
         working-directory: android
         run: gradle --no-daemon assembleDebug
+
+      - name: Keep the test report if something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: android/app/build/reports/tests/
 
       - name: Keep the APK with the run
         uses: actions/upload-artifact@v4

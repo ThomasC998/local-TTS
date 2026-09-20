@@ -203,7 +203,7 @@ class Server(context: Context, private val settings: Settings) {
 
     /** The URL a media player fetches one paragraph from. */
     fun paragraphUrl(endpoint: Endpoint, readId: String, index: Int): String =
-        "${endpoint.base}/v1/read/$readId/p$index.wav?wait=1&t=${settings.token}"
+        paragraphUrl(endpoint.base, readId, index, settings.token)
 
     private fun call(request: Request, timeoutSeconds: Long = 60): JSONObject {
         val authorised = request.newBuilder()
@@ -232,9 +232,21 @@ class Server(context: Context, private val settings: Settings) {
         }
     }
 
-    private companion object {
-        val JSON = "application/json; charset=utf-8".toMediaType()
-        const val WAKE_WAIT_MS = 20_000L
+    companion object {
+        /**
+         * Where one paragraph lives.
+         *
+         * The token rides in the query string because a media player fetches
+         * these itself and attaches no headers of its own, and ``wait=1``
+         * because a player handed audio of unknown length invents a duration
+         * from it -- better to wait for the first paragraph than to show a
+         * scrub bar claiming the read is twenty-four hours long.
+         */
+        fun paragraphUrl(base: String, readId: String, index: Int, token: String): String =
+            "$base/v1/read/$readId/p$index.wav?wait=1&t=$token"
+
+        private val JSON = "application/json; charset=utf-8".toMediaType()
+        private const val WAKE_WAIT_MS = 20_000L
 
         /**
          * A client that trusts exactly one certificate: the paired Mac's.
@@ -243,7 +255,7 @@ class Server(context: Context, private val settings: Settings) {
          * certificate on the network -- is rejected, because the only thing
          * this phone ever talks to is that one machine.
          */
-        fun buildClient(fingerprint: String): OkHttpClient {
+        private fun buildClient(fingerprint: String): OkHttpClient {
             val trust = object : X509TrustManager {
                 override fun checkClientTrusted(
                     chain: Array<out X509Certificate>?, authType: String?,

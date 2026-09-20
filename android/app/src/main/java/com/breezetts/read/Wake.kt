@@ -52,26 +52,37 @@ object Wake {
      * broadcast for the /24 the Mac is on gets through far more often, and a
      * home network is a /24 in all but pathological cases.
      */
-    private fun broadcastFor(host: String): InetAddress {
+    internal fun broadcastAddressFor(host: String): String {
         val parts = host.split(".")
-        if (parts.size == 4) {
-            val subnet = parts.take(3).joinToString(".")
-            return InetAddress.getByName("$subnet.255")
+        if (parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 }) {
+            return parts.take(3).joinToString(".") + ".255"
         }
-        return InetAddress.getByName("255.255.255.255")
+        return "255.255.255.255"
     }
 
-    private fun magicPacket(mac: String, target: InetAddress) {
+    /**
+     * The magic packet's bytes: six 0xFF, then the hardware address sixteen
+     * times. Pure, and therefore the one part of waking that can be checked
+     * without a sleeping Mac to aim it at.
+     */
+    internal fun magicPacketBytes(mac: String): ByteArray {
         val hardware = mac.split(":", "-")
             .mapNotNull { it.trim().toIntOrNull(16)?.toByte() }
         if (hardware.size != 6) throw IOException("Not a hardware address: $mac")
-
         val payload = ByteArray(6 + 16 * 6)
         for (index in 0 until 6) payload[index] = 0xFF.toByte()
+        val address = hardware.toByteArray()
         for (repeat in 0 until 16) {
-            System.arraycopy(hardware.toByteArray(), 0, payload, 6 + repeat * 6, 6)
+            System.arraycopy(address, 0, payload, 6 + repeat * 6, 6)
         }
+        return payload
+    }
 
+    private fun broadcastFor(host: String): InetAddress =
+        InetAddress.getByName(broadcastAddressFor(host))
+
+    private fun magicPacket(mac: String, target: InetAddress) {
+        val payload = magicPacketBytes(mac)
         DatagramSocket().use { socket ->
             socket.broadcast = true
             socket.send(DatagramPacket(payload, payload.size, target, WOL_PORT))

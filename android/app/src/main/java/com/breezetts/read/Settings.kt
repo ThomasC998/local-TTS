@@ -80,25 +80,14 @@ class Settings(context: Context) {
 
     /** Take everything out of a scanned pairing code. Returns why it failed. */
     fun applyPairingCode(scanned: String): String? {
-        val payload = try {
-            JSONObject(scanned)
-        } catch (error: Exception) {
-            return "That code is not a pairing code"
-        }
-        val scannedHost = payload.optString("host")
-        val scannedToken = payload.optString("token")
-        val scannedPrint = payload.optString("fingerprint")
-        if (scannedHost.isBlank() || scannedToken.isBlank() || scannedPrint.isBlank()) {
-            return "That pairing code is missing the address, the token or the fingerprint"
-        }
-        host = scannedHost
-        port = payload.optInt("port", 7860)
-        token = scannedToken
-        fingerprint = scannedPrint
-        name = payload.optString("name", "the Mac")
+        val pairing = PairingCode.parse(scanned) ?: return PairingCode.WHY_NOT
+        host = pairing.host
+        port = pairing.port
+        token = pairing.token
+        fingerprint = pairing.fingerprint
+        name = pairing.name
+        macAddresses = pairing.macAddresses
         lastGoodHost = ""
-        val macs = payload.optJSONArray("mac_addresses")
-        macAddresses = (0 until (macs?.length() ?: 0)).mapNotNull { macs?.optString(it) }
         return null
     }
 
@@ -114,5 +103,54 @@ class Settings(context: Context) {
         const val LLM = "useLlm"
         const val CONFIRM = "confirmScreenshots"
         const val POWER = "powerMode"
+    }
+}
+
+
+/** What a pairing code says, once it has been read. */
+data class Pairing(
+    val host: String,
+    val port: Int,
+    val token: String,
+    val fingerprint: String,
+    val name: String,
+    val macAddresses: List<String>,
+)
+
+/**
+ * Reading the code photographed off the Mac's screen.
+ *
+ * Kept apart from where it is stored so it can be checked without a phone:
+ * this is the one piece of the pairing flow that can be wrong in a way nothing
+ * later would notice -- a missing fingerprint would simply mean the connection
+ * trusted anything, which looks exactly like working.
+ */
+object PairingCode {
+
+    const val WHY_NOT =
+        "That is not a pairing code, or it is missing the address, the token " +
+            "or the fingerprint"
+
+    fun parse(scanned: String): Pairing? {
+        val payload = try {
+            JSONObject(scanned)
+        } catch (error: Exception) {
+            return null
+        }
+        val host = payload.optString("host")
+        val token = payload.optString("token")
+        val fingerprint = payload.optString("fingerprint")
+        if (host.isBlank() || token.isBlank() || fingerprint.isBlank()) return null
+        val macs = payload.optJSONArray("mac_addresses")
+        return Pairing(
+            host = host,
+            port = payload.optInt("port", 7860),
+            token = token,
+            fingerprint = fingerprint,
+            name = payload.optString("name").ifBlank { "the Mac" },
+            macAddresses = (0 until (macs?.length() ?: 0))
+                .mapNotNull { index -> macs?.optString(index) }
+                .filter { it.isNotBlank() },
+        )
     }
 }
