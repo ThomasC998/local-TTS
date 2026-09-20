@@ -146,8 +146,8 @@ Phone and Mac on the same Wi-Fi. Server running.
 
    The list comes from the Mac, so it fills in once the Mac answers; out of
    range you still see the voice you chose. If you delete that voice on the
-   Mac, reads from this phone are refused rather than quietly read in
-   something else, and the app says so until you pick another.
+   Mac, the next read is spoken in the Mac's own voice instead — the app says
+   so once and then stops asking for the one that is gone.
 
 5. **The share sheet.** From any app: **Share → Read on Mac**.
 

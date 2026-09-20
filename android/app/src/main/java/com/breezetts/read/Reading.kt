@@ -89,6 +89,7 @@ object ReadController {
 
                 val readId = started.optString("read_id")
                 if (readId.isBlank()) throw Server.ServerError("The Mac started no read")
+                noteSubstitution(app, settings, started)
                 val live = Live(readId, endpoint, server)
                 active.set(live)
 
@@ -107,6 +108,22 @@ object ReadController {
                 say(app, error.message ?: "That did not work")
             }
         }
+    }
+
+    /**
+     * The Mac read this in its own voice, because the one asked for is gone.
+     *
+     * Said once and then put right: a voice deleted on the Mac is not coming
+     * back, so the phone stops asking for it. Repeating the message on every
+     * read would be nagging about something the phone can simply fix, and
+     * leaving the dead id in place is what would make it repeat.
+     */
+    private fun noteSubstitution(app: Context, settings: Settings, started: JSONObject) {
+        if (!started.optBoolean("voice_substituted")) return
+        val gone = settings.voiceName.ifBlank { settings.voiceId }.ifBlank { "That voice" }
+        val used = started.optString("voice_name").ifBlank { "its own voice" }
+        settings.clearVoice()
+        say(app, "$gone is gone from ${settings.name} — reading in $used")
     }
 
     /** Stop whatever is playing and let the Mac drop the audio it was holding. */

@@ -326,5 +326,51 @@ registry.clear("shutdown")
 
 
 # ---------------------------------------------------------------------------
+section("A voice the Mac no longer has")
+# ---------------------------------------------------------------------------
+# A phone holds the id of a voice it was told about once, and cannot know that
+# it has since been deleted here. That is an ordinary thing to happen to a
+# device kept in a pocket, so the read is answered in this Mac's own voice
+# rather than refused. A request from anything else keeps the error: there the
+# id was typed by whoever wrote the request.
+import breeze_server  # noqa: E402
+import voice_store  # noqa: E402
+from fastapi import HTTPException  # noqa: E402
+
+HERE = {"voice_mac", "voice_other"}
+real_get, real_list = voice_store.get_voice, voice_store.list_voices
+voice_store.get_voice = lambda voice_id: (
+    {"voice_id": voice_id} if voice_id in HERE
+    else (_ for _ in ()).throw(voice_store.VoiceNotFound(voice_id))
+)
+voice_store.list_voices = lambda **_: {"voices": [{"voice_id": "voice_first"}]}
+MAC = {"voice_id": "voice_mac"}
+
+try:
+    check("a phone asking for a deleted voice gets the Mac's own",
+          breeze_server._resolve_speak_voice(
+              {"voice_id": "voice_gone"}, MAC, substitute=True) == "voice_mac")
+    check("...and one asking for a voice that is here still gets it",
+          breeze_server._resolve_speak_voice(
+              {"voice_id": "voice_other"}, MAC, substitute=True) == "voice_other")
+    check("...and one asking for nothing gets the Mac's own, as before",
+          breeze_server._resolve_speak_voice({}, MAC, substitute=True) == "voice_mac")
+
+    refused = None
+    try:
+        breeze_server._resolve_speak_voice({"voice_id": "voice_gone"}, MAC)
+    except HTTPException as exc:
+        refused = exc
+    check("a hotkey or a script still gets an error for a voice that is gone",
+          refused is not None and refused.status_code == 404, str(refused))
+
+    check("the Mac's own setting pointing at a deleted voice falls to the library",
+          breeze_server._resolve_speak_voice(
+              {}, {"voice_id": "voice_gone"}, substitute=True) == "voice_first")
+finally:
+    voice_store.get_voice, voice_store.list_voices = real_get, real_list
+
+
+# ---------------------------------------------------------------------------
 print(f"\n{PASSED} passed, {FAILED} failed\n")
 sys.exit(1 if FAILED else 0)

@@ -523,7 +523,11 @@ is untouched -- the web UI and the hotkeys keep talking plain HTTP to
 
 The phone picks its own voice, too: any voice in the Mac's library, chosen in
 the app and asked for on every read, while this Mac's own hotkeys keep reading
-in whatever the Mac is set to.
+in whatever the Mac is set to. Delete that voice here and the phone's reads
+fall back to this Mac's own rather than failing -- a phone in a pocket cannot
+know what was deleted on a laptop, so that is not a bad request to refuse. A
+script posting an id that does not exist still gets an error, because there the
+id came from whoever wrote the request.
 
 This Mac and the phone can read different things at the same time. There is one
 model in memory and the engine takes it a paragraph at a time, so the two

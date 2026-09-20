@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import io
 import json
 import logging
@@ -2037,18 +2038,49 @@ def _clipboard_text() -> str:
         raise HTTPException(500, f"Could not read the clipboard: {exc}") from exc
 
 
-def _resolve_speak_voice(fields: dict[str, Any], config: dict[str, Any]) -> str:
-    """The voice this utterance uses: request, then setting, then whatever exists."""
-    voice_id = (fields.get("voice_id") or "").strip() or config.get("voice_id")
+def _resolve_speak_voice(
+    fields: dict[str, Any], config: dict[str, Any], *, substitute: bool = False
+) -> str:
+    """The voice this utterance uses: request, then setting, then whatever exists.
+
+    ``substitute`` is what a phone asks for. A phone holds the id of a voice it
+    was told about once and cannot know that it has since been deleted here;
+    that is an ordinary thing to happen to a device kept in a pocket, not a bad
+    request, and the useful answer is to read the text in this Mac's own voice
+    rather than to refuse. Everything else -- the hotkeys, a script posting to
+    the API -- keeps the 404, because there the id came from whoever wrote the
+    request and a silent substitution would hide their typo.
+    """
+    asked = (fields.get("voice_id") or "").strip()
+    if asked and substitute and not _voice_exists(asked):
+        logger.info(
+            "Voice %s is gone; reading in this Mac's own voice instead", asked
+        )
+        asked = ""
+
+    voice_id = asked or config.get("voice_id")
     if voice_id:
-        _load_voice(voice_id)  # 404s here rather than halfway through speaking
-        return voice_id
+        if asked or _voice_exists(voice_id):
+            _load_voice(voice_id)  # 404s here rather than halfway through speaking
+            return voice_id
+        # The Mac's own setting points at a voice that is no longer here, which
+        # is nobody's request to answer with an error. Fall through.
+        logger.info("This Mac's voice %s is gone; using the library", voice_id)
+
     library = voice_store.list_voices(page_size=1)
     if not library["voices"]:
         raise HTTPException(
             400, "No saved voices yet. Design or clone one in the web UI first."
         )
     return library["voices"][0]["voice_id"]
+
+
+def _voice_exists(voice_id: str) -> bool:
+    try:
+        voice_store.get_voice(voice_id)
+    except voice_store.VoiceNotFound:
+        return False
+    return True
 
 
 def _active_session() -> speech_session.SpeechSession | None:
@@ -2225,10 +2257,16 @@ def _speak_events(
         yield event
 
 
-def _prepare_utterance(fields: dict[str, Any], text: str) -> dict[str, Any]:
-    """Resolve settings, voice and engine options for one utterance."""
+def _prepare_utterance(
+    fields: dict[str, Any], text: str, *, substitute_voice: bool = False
+) -> dict[str, Any]:
+    """Resolve settings, voice and engine options for one utterance.
+
+    ``substitute_voice`` lets a voice that no longer exists be replaced by this
+    Mac's own rather than refused; see ``_resolve_speak_voice``.
+    """
     config = speech_config.load()
-    voice_id = _resolve_speak_voice(fields, config)
+    voice_id = _resolve_speak_voice(fields, config, substitute=substitute_voice)
     use_llm = _as_bool(fields.get("llm"), False)
     instruction = (
         fields.get("llm_instruction")
@@ -2277,6 +2315,10 @@ def _prepare_utterance(fields: dict[str, Any], text: str) -> dict[str, Any]:
     return {
         "config": config,
         "voice_id": voice_id,
+        "voice_name": (job.get("voice") or {}).get("voice_name"),
+        # What the caller asked for, when that is not what it got. The phone
+        # uses this to stop asking for a voice this Mac no longer has.
+        "voice_asked": (fields.get("voice_id") or "").strip() or None,
         "use_llm": use_llm,
         "instruction": instruction,
         "job": job,
@@ -2789,7 +2831,9 @@ async def read_start(request: Request) -> dict[str, Any]:
     mac_power.MANAGER.cancel_sleep()
 
     origin = _origin(request)
-    prepared = await run_in_threadpool(_prepare_utterance, fields, text)
+    prepared = await run_in_threadpool(
+        functools.partial(_prepare_utterance, substitute_voice=True), fields, text
+    )
     read = await run_in_threadpool(
         remote_read.READS.create, prepared, text, origin["id"]
     )
@@ -2802,6 +2846,13 @@ async def read_start(request: Request) -> dict[str, Any]:
         "text": text if source == "screenshot" else None,
         "chars": len(text),
         "voice_id": prepared["voice_id"],
+        "voice_name": prepared["voice_name"],
+        # True when the phone asked for a voice this Mac no longer has, so it
+        # can stop asking rather than be told again on every read.
+        "voice_substituted": bool(
+            prepared["voice_asked"]
+            and prepared["voice_asked"] != prepared["voice_id"]
+        ),
         "llm": prepared["use_llm"],
         "preview": read.preview(),
         **manifest,

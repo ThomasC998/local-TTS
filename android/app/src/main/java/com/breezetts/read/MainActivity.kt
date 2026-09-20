@@ -134,8 +134,9 @@ class MainActivity : AppCompatActivity() {
         val known = voices.map { it.id }
 
         // A voice chosen on this phone but no longer on the Mac stays in the
-        // list until it is changed. Dropping it silently would look like the
-        // phone had forgotten it, and the Mac will refuse that read anyway.
+        // list until it is changed, so that the screen shows what this phone
+        // is actually set to rather than quietly appearing to have forgotten
+        // it. Reads still work: the Mac reads them in its own voice.
         val missing = chosen.isNotBlank() && voices.isNotEmpty() && chosen !in known
         val extra = if (missing || (chosen.isNotBlank() && voices.isEmpty())) {
             listOf(Server.Voice(chosen, settings.voiceName.ifBlank { chosen }))
@@ -179,7 +180,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.voiceState).text = when {
             missingOnMac ->
                 "${settings.voiceName.ifBlank { settings.voiceId }} is no longer on " +
-                    "${settings.name}. Reads will be refused until you pick another."
+                    "${settings.name}, so reads use ${settings.name}'s own voice " +
+                    "until you pick another."
             settings.voiceId.isBlank() ->
                 "Reads use whatever ${settings.name} is set to."
             else ->
