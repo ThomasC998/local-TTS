@@ -11,6 +11,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
@@ -35,6 +36,9 @@ object ReadController {
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val active = AtomicReference<Live?>(null)
+
+    /** The one binding to the playback service, while there is a read to drive. */
+    private var connection: ListenableFuture<MediaController>? = null
 
     private data class Live(
         val readId: String,
@@ -103,6 +107,9 @@ object ReadController {
                 player.stop()
                 player.clearMediaItems()
             }
+            // Nothing left to drive: hand the binding back so the service can
+            // stop and take its player with it.
+            main.post { release() }
         }
     }
 
@@ -151,9 +158,15 @@ object ReadController {
         var known = maxOf(started.optInt("paragraphs", 1), 1)
         var final = started.optBoolean("final", false)
         val deadline = System.currentTimeMillis() + FOLLOW_LIMIT_MS
+        var wait = FIRST_POLL_MS
 
         while (!final && System.currentTimeMillis() < deadline) {
-            Thread.sleep(1_500)
+            Thread.sleep(wait)
+            // Backing off matters on a phone: a model still writing after five
+            // minutes is not going to produce a paragraph in the next second
+            // either, and a fixed interval would mean thousands of requests
+            // and a radio that never gets to sleep.
+            wait = minOf(wait * 2, SLOWEST_POLL_MS)
             if (active.get()?.readId != readId) return  // replaced by another read
             val manifest = try {
                 server.manifest(endpoint, readId)
@@ -168,6 +181,7 @@ object ReadController {
             final = manifest.optBoolean("final", false)
             val now = manifest.optInt("paragraphs", known)
             if (now > known) {
+                wait = FIRST_POLL_MS  // it is producing again; look sooner
                 val added = (known until now).map { index ->
                     item(server, endpoint, readId, index, title)
                 }
@@ -197,19 +211,44 @@ object ReadController {
     /**
      * Do something with the player, connecting to the service if need be.
      *
-     * Must run on the main thread, and the connection is cheap enough to make
-     * per action -- the service and its session outlive any one of them.
+     * One connection, kept and reused. A MediaController is a binding to the
+     * playback service, and this is called for every paragraph the language
+     * model adds to a growing read -- so building a fresh one each time, and
+     * never releasing it, would leave a long read holding twenty bindings that
+     * between them keep the service, and its ExoPlayer, alive indefinitely.
+     *
+     * Main thread only, which is where Media3 requires a controller to be used.
      */
     private fun controller(app: Context, action: (MediaController) -> Unit) {
-        val token = SessionToken(app, ComponentName(app, PlayerService::class.java))
-        val future = MediaController.Builder(app, token).buildAsync()
+        val existing = connection
+        val future = if (existing != null && !existing.isCancelled) {
+            existing
+        } else {
+            val token = SessionToken(app, ComponentName(app, PlayerService::class.java))
+            MediaController.Builder(app, token).buildAsync().also { connection = it }
+        }
         future.addListener({
             try {
-                action(future.get())
+                val player = future.get()
+                if (player.isConnected) {
+                    action(player)
+                } else {
+                    // The service went away -- after a read ended, most likely.
+                    // Drop the stale binding and make a fresh one next time.
+                    release()
+                    Log.i(TAG, "The player had stopped; reconnecting on the next read")
+                }
             } catch (error: Exception) {
                 Log.w(TAG, "Could not reach the player", error)
+                release()
             }
         }, ContextCompat.getMainExecutor(app))
+    }
+
+    /** Let go of the player. Main thread. */
+    private fun release() {
+        connection?.let { MediaController.releaseFuture(it) }
+        connection = null
     }
 
     private fun say(app: Context, message: String) {
@@ -218,4 +257,6 @@ object ReadController {
 
     /** However long a document is, the model is not still writing it an hour on. */
     private const val FOLLOW_LIMIT_MS = 60 * 60 * 1000L
+    private const val FIRST_POLL_MS = 1_500L
+    private const val SLOWEST_POLL_MS = 15_000L
 }

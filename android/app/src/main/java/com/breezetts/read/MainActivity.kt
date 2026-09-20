@@ -45,7 +45,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, problem, Toast.LENGTH_LONG).show()
         } else {
             Toast.makeText(this, "Paired with ${settings.name}", Toast.LENGTH_SHORT).show()
-            Trigger.show(this)
+            Trigger.apply(this)
             refresh()
         }
     }
@@ -81,6 +81,13 @@ class MainActivity : AppCompatActivity() {
                 settings.confirmScreenshots = checked
             }
         }
+        findViewById<CheckBox>(R.id.showNotification).apply {
+            isChecked = settings.showNotification
+            setOnCheckedChangeListener { _, checked ->
+                settings.showNotification = checked
+                Trigger.apply(this@MainActivity)
+            }
+        }
 
         findViewById<EditText>(R.id.remoteHost).apply {
             setText(settings.remoteHost)
@@ -99,7 +106,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (settings.paired) Trigger.show(this)
+        if (settings.paired) Trigger.apply(this)
         refresh()
     }
 

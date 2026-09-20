@@ -44,6 +44,18 @@ class PlayerService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
+        // Without this the service -- and an ExoPlayer holding codecs and an
+        // audio track -- stays resident for the rest of the day after a read
+        // finishes. Nothing is playing, nothing is draining, but it is all
+        // still there, and the app sits in the battery list for no reason.
+        player.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED) {
+                    pauseAllPlayersAndStopSelf()
+                }
+            }
+        })
+
         session = MediaSession.Builder(this, DebouncedSkips(player))
             .setId("breeze-read")
             .build()

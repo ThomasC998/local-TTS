@@ -44,7 +44,7 @@ class Server(context: Context, private val settings: Settings) {
 
     class ServerError(message: String, val code: Int = 0) : IOException(message)
 
-    private val client: OkHttpClient by lazy { buildClient(settings.fingerprint) }
+    private val client: OkHttpClient get() = shared(settings.fingerprint)
 
     fun httpClient(): OkHttpClient = client
 
@@ -255,6 +255,29 @@ class Server(context: Context, private val settings: Settings) {
          * certificate on the network -- is rejected, because the only thing
          * this phone ever talks to is that one machine.
          */
+        @Volatile private var cached: Pair<String, OkHttpClient>? = null
+
+        /**
+         * The one client this process uses.
+         *
+         * An OkHttpClient carries a connection pool and a dispatcher, each with
+         * threads of its own, and this app builds a Server in five places --
+         * every trigger, the player, the settings screen. One client per caller
+         * would mean five pools, five sets of idle threads, and connections
+         * that can never be reused between a read starting and the player
+         * fetching its first paragraph.
+         *
+         * Keyed by the fingerprint so that re-pairing with a different Mac
+         * builds a new one rather than trusting the old certificate.
+         */
+        @Synchronized
+        private fun shared(fingerprint: String): OkHttpClient {
+            cached?.let { (forPrint, client) -> if (forPrint == fingerprint) return client }
+            val client = buildClient(fingerprint)
+            cached = fingerprint to client
+            return client
+        }
+
         private fun buildClient(fingerprint: String): OkHttpClient {
             val trust = object : X509TrustManager {
                 override fun checkClientTrusted(

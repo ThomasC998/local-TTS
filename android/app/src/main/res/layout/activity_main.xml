@@ -51,6 +51,13 @@
             android:checked="true"
             android:text="Show a screenshot's text before reading it" />
 
+        <CheckBox
+            android:id="@+id/showNotification"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:checked="true"
+            android:text="Keep a Read the clipboard button in the notifications" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

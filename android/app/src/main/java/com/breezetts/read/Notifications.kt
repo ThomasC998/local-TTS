@@ -27,6 +27,11 @@ object Trigger {
     private const val CHANNEL = "breeze-trigger"
     private const val ID = 4201
 
+    /** Put the button up, or take it down if it has been turned off. */
+    fun apply(context: Context) {
+        if (Settings(context).showNotification) show(context) else hide(context)
+    }
+
     fun show(context: Context) {
         val app = context.applicationContext
         val manager = NotificationManagerCompat.from(app)
@@ -85,6 +90,6 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context == null) return
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
-        if (Settings(context).paired) Trigger.show(context)
+        if (Settings(context).paired) Trigger.apply(context)
     }
 }

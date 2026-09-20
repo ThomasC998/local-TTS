@@ -71,6 +71,18 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(CONFIRM, true)
         set(value) = prefs.edit().putBoolean(CONFIRM, value).apply()
 
+    /**
+     * Whether the ongoing "Read the clipboard" notification is shown.
+     *
+     * It costs no battery -- an ongoing notification is a row in a list, not a
+     * process -- but it is always there, and a permanent notification for
+     * something used twice a day is a reasonable thing not to want. The
+     * selection-toolbar action and the share sheet work without it.
+     */
+    var showNotification: Boolean
+        get() = prefs.getBoolean(NOTIFY, true)
+        set(value) = prefs.edit().putBoolean(NOTIFY, value).apply()
+
     var powerMode: String
         get() = prefs.getString(POWER, "sleep_when_done") ?: "sleep_when_done"
         set(value) = prefs.edit().putString(POWER, value).apply()
@@ -102,6 +114,7 @@ class Settings(context: Context) {
         const val REMOTE = "remoteHost"
         const val LLM = "useLlm"
         const val CONFIRM = "confirmScreenshots"
+        const val NOTIFY = "showNotification"
         const val POWER = "powerMode"
     }
 }
